@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [0.4.6-preview.1] - 2026-08-10
+
+### 修复
+
+- 从系统再次打开 Markdown 文件时复用现有 LightMarkit 进程，并将文件交给主窗口，不再启动多个应用实例。
+- macOS 未安装 Chrome 时改用系统原生 WebKit 导出 PDF，无需额外下载浏览器或占用 Chromium 缓存空间。
+
 ## [0.4.5] - 2026-08-08
 
 ### 新增
@@ -221,7 +228,8 @@
 - 首次正式发布 LightMarkit。
 - 支持 Markdown 编辑、实时预览、文件管理、自动保存、Mermaid 图表以及 HTML、PDF 导出。
 
-[Unreleased]: https://github.com/zhtdbobo/LightMarkit/compare/v0.4.5...HEAD
+[Unreleased]: https://github.com/zhtdbobo/LightMarkit/compare/v0.4.6-preview.1...HEAD
+[0.4.6-preview.1]: https://github.com/zhtdbobo/LightMarkit/compare/v0.4.5...v0.4.6-preview.1
 [0.4.5]: https://github.com/zhtdbobo/LightMarkit/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/zhtdbobo/LightMarkit/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/zhtdbobo/LightMarkit/compare/v0.4.2...v0.4.3

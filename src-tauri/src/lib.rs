@@ -1,6 +1,8 @@
 use base64::{engine::general_purpose, Engine as _};
 use encoding_rs::{Encoding, BIG5, GBK, SHIFT_JIS, UTF_16BE, UTF_16LE, WINDOWS_1252};
-use headless_chrome::{types::PrintToPdfOptions, Browser, LaunchOptions};
+use headless_chrome::{
+    browser::default_executable, types::PrintToPdfOptions, Browser, LaunchOptions,
+};
 use notify::{recommended_watcher, EventKind, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -16,6 +18,23 @@ use tauri::{
     Emitter, Manager, State,
 };
 use tauri_plugin_opener::OpenerExt;
+
+#[cfg(target_os = "macos")]
+use objc2::{runtime::ProtocolObject, AnyThread};
+#[cfg(target_os = "macos")]
+use objc2_app_kit::{
+    NSPaperOrientation, NSPrintInfo, NSPrintJobSavingURL, NSPrintSaveJob, NSPrintingPaginationMode,
+};
+#[cfg(target_os = "macos")]
+use objc2_foundation::{MainThreadMarker, NSCopying, NSObjectProtocol, NSSize, NSString, NSURL};
+#[cfg(target_os = "macos")]
+use objc2_web_kit::WKWebView;
+#[cfg(target_os = "macos")]
+use std::sync::{mpsc, Arc};
+#[cfg(target_os = "macos")]
+use std::time::Duration;
+#[cfg(target_os = "macos")]
+use tauri::{webview::PageLoadEvent, WebviewUrl, WebviewWindowBuilder};
 
 struct FileState {
     current_file: Mutex<Option<PathBuf>>,
@@ -99,7 +118,6 @@ const MAX_SCAN_DEPTH: usize = 20;
 const SYSTEM_MENU_ACTION_EVENT: &str = "system-menu-action";
 const OPEN_FILE_REQUESTED_EVENT: &str = "open-file-requested";
 
-#[cfg_attr(not(any(target_os = "macos", test)), allow(dead_code))]
 fn deliver_or_queue_open_file(
     delivery: &mut OpenFileDeliveryState,
     path: PathBuf,
@@ -125,6 +143,36 @@ fn show_main_window(app: &tauri::AppHandle) {
     }
 }
 
+fn open_markdown_in_main_window(app: &tauri::AppHandle, path: PathBuf) {
+    if !path.is_file() || !is_markdown_file_path(&path) {
+        show_main_window(app);
+        return;
+    }
+
+    let Some(state) = app.try_state::<FileState>() else {
+        return;
+    };
+
+    if let Ok(mut current_file) = state.current_file.lock() {
+        *current_file = Some(path.clone());
+    }
+
+    let ready_path = state
+        .open_file_delivery
+        .lock()
+        .ok()
+        .and_then(|mut delivery| deliver_or_queue_open_file(&mut delivery, path));
+
+    show_main_window(app);
+    if let Some(path) = ready_path {
+        let _ = app.emit_to(
+            "main",
+            OPEN_FILE_REQUESTED_EVENT,
+            path.to_string_lossy().into_owned(),
+        );
+    }
+}
+
 fn dispatch_system_menu_action(app: &tauri::AppHandle, action: &str) {
     show_main_window(app);
     let _ = app.emit_to("main", SYSTEM_MENU_ACTION_EVENT, action);
@@ -141,25 +189,7 @@ fn handle_run_event(app: &tauri::AppHandle, event: tauri::RunEvent) {
             return;
         };
 
-        if let Ok(mut current_file) = app.state::<FileState>().current_file.lock() {
-            *current_file = Some(path.clone());
-        }
-
-        let ready_path = app
-            .state::<FileState>()
-            .open_file_delivery
-            .lock()
-            .ok()
-            .and_then(|mut delivery| deliver_or_queue_open_file(&mut delivery, path));
-
-        show_main_window(app);
-        if let Some(path) = ready_path {
-            let _ = app.emit_to(
-                "main",
-                OPEN_FILE_REQUESTED_EVENT,
-                path.to_string_lossy().into_owned(),
-            );
-        }
+        open_markdown_in_main_window(app, path);
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -467,6 +497,20 @@ where
         }
 
         Some(path)
+    })
+}
+
+fn markdown_file_arg_from_launch<I, S>(args: I, cwd: &Path) -> Option<PathBuf>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<OsString>,
+{
+    markdown_file_arg_from_args(args).map(|path| {
+        if path.is_absolute() {
+            path
+        } else {
+            cwd.join(path)
+        }
     })
 }
 
@@ -1073,6 +1117,148 @@ fn temporary_export_html_path() -> PathBuf {
     ))
 }
 
+#[cfg(target_os = "macos")]
+fn temporary_native_pdf_path(output_path: &Path) -> PathBuf {
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or(0);
+    let mut temp_path = output_path.to_path_buf();
+    temp_path.set_extension(format!(
+        "lightmarkit-{}-{}.tmp.pdf",
+        process::id(),
+        timestamp
+    ));
+    temp_path
+}
+
+#[cfg(target_os = "macos")]
+async fn receive_native_pdf_event<T: Send + 'static>(
+    receiver: mpsc::Receiver<T>,
+    operation: &'static str,
+) -> Result<T, String> {
+    tauri::async_runtime::spawn_blocking(move || receiver.recv_timeout(Duration::from_secs(20)))
+        .await
+        .map_err(|error| format!("Failed to wait for native PDF {}: {}", operation, error))?
+        .map_err(|error| format!("Timed out waiting for native PDF {}: {}", operation, error))
+}
+
+#[cfg(target_os = "macos")]
+async fn export_pdf_with_macos_webkit(
+    app: &tauri::AppHandle,
+    html_url: &str,
+    output_path: &Path,
+) -> Result<(), String> {
+    let url = html_url
+        .parse()
+        .map_err(|error| format!("Failed to parse temporary HTML URL: {}", error))?;
+    let label = format!(
+        "pdf-export-{}-{}",
+        process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0)
+    );
+    let (load_sender, load_receiver) = mpsc::channel();
+    let load_sender = Arc::new(Mutex::new(Some(load_sender)));
+    let page_load_sender = Arc::clone(&load_sender);
+
+    let window = WebviewWindowBuilder::new(app, label, WebviewUrl::External(url))
+        .title("LightMarkit PDF Export")
+        .inner_size(PDF_VIEWPORT_WIDTH as f64, PDF_VIEWPORT_HEIGHT as f64)
+        .visible(false)
+        .decorations(false)
+        .on_page_load(move |_window, payload| {
+            if payload.event() == PageLoadEvent::Finished {
+                if let Ok(mut sender) = page_load_sender.lock() {
+                    if let Some(sender) = sender.take() {
+                        let _ = sender.send(());
+                    }
+                }
+            }
+        })
+        .build()
+        .map_err(|error| format!("Failed to create native PDF webview: {}", error))?;
+
+    let temp_pdf_path = temporary_native_pdf_path(output_path);
+    let result = async {
+        receive_native_pdf_event(load_receiver, "page load").await?;
+
+        let (print_sender, print_receiver) = mpsc::channel();
+        let print_output_path = temp_pdf_path.clone();
+        window
+            .with_webview(move |webview| {
+                let result = (|| -> Result<(), String> {
+                    let _main_thread = MainThreadMarker::new().ok_or_else(|| {
+                        "Native PDF export must run on the main thread".to_string()
+                    })?;
+
+                    // SAFETY: Tauri executes `with_webview` on the main thread and
+                    // `inner()` is the WKWebView owned by this hidden export window.
+                    unsafe {
+                        let webview: &WKWebView = &*webview.inner().cast();
+                        if !webview.respondsToSelector(objc2::sel!(printOperationWithPrintInfo:)) {
+                            return Err("Native PDF export requires macOS 11 or later".to_string());
+                        }
+
+                        let print_info = NSPrintInfo::init(NSPrintInfo::alloc());
+                        print_info.setPaperSize(NSSize::new(
+                            PDF_PAPER_WIDTH_INCHES * 72.0,
+                            PDF_PAPER_HEIGHT_INCHES * 72.0,
+                        ));
+                        print_info.setOrientation(NSPaperOrientation::Portrait);
+                        print_info.setTopMargin(PDF_MARGIN_INCHES * 72.0);
+                        print_info.setRightMargin(PDF_MARGIN_INCHES * 72.0);
+                        print_info.setBottomMargin(PDF_MARGIN_INCHES * 72.0);
+                        print_info.setLeftMargin(PDF_MARGIN_INCHES * 72.0);
+                        print_info.setHorizontalPagination(NSPrintingPaginationMode::Fit);
+                        print_info.setVerticalPagination(NSPrintingPaginationMode::Automatic);
+                        print_info.setJobDisposition(NSPrintSaveJob);
+
+                        let output_path = NSString::from_str(&print_output_path.to_string_lossy());
+                        let output_url = NSURL::fileURLWithPath(&output_path);
+                        let settings = print_info.dictionary();
+                        let saving_url_key: &ProtocolObject<dyn NSCopying> =
+                            ProtocolObject::from_ref(NSPrintJobSavingURL);
+                        settings.setObject_forKey(&output_url, saving_url_key);
+
+                        let print_operation = webview.printOperationWithPrintInfo(&print_info);
+                        print_operation.setShowsPrintPanel(false);
+                        print_operation.setShowsProgressPanel(false);
+                        print_operation.setCanSpawnSeparateThread(false);
+
+                        if !print_operation.runOperation() {
+                            return Err("macOS WebKit failed to generate PDF".to_string());
+                        }
+                    }
+
+                    Ok(())
+                })();
+
+                let _ = print_sender.send(result);
+            })
+            .map_err(|error| format!("Failed to access native PDF webview: {}", error))?;
+
+        receive_native_pdf_event(print_receiver, "print operation").await??;
+
+        if !temp_pdf_path.is_file() {
+            return Err("macOS WebKit did not create a PDF file".to_string());
+        }
+
+        fs::rename(&temp_pdf_path, output_path)
+            .map_err(|error| format!("Failed to save native PDF file: {}", error))?;
+        Ok(())
+    }
+    .await;
+
+    let _ = window.close();
+    if result.is_err() {
+        let _ = fs::remove_file(&temp_pdf_path);
+    }
+    result
+}
+
 #[tauri::command]
 async fn export_html(file_path: String, html_content: String, title: String) -> Result<(), String> {
     let output_path = PathBuf::from(&file_path);
@@ -1112,7 +1298,12 @@ fn open_exported_file(app: tauri::AppHandle, file_path: String) -> Result<(), St
 }
 
 #[tauri::command]
-async fn export_pdf(file_path: String, html_content: String, title: String) -> Result<(), String> {
+async fn export_pdf(
+    app: tauri::AppHandle,
+    file_path: String,
+    html_content: String,
+    title: String,
+) -> Result<(), String> {
     let output_path = PathBuf::from(&file_path);
     ensure_export_file_path(&output_path, &["pdf"])?;
     let escaped_title = escape_html_text(&title);
@@ -1137,9 +1328,20 @@ async fn export_pdf(file_path: String, html_content: String, title: String) -> R
         .map_err(|e| format!("Failed to write temporary HTML file: {}", e))?;
     let temp_html_url = path_to_file_url(&temp_html_path);
 
+    #[cfg(target_os = "macos")]
+    if default_executable().is_err() {
+        let result = export_pdf_with_macos_webkit(&app, &temp_html_url, &output_path).await;
+        let _ = fs::remove_file(&temp_html_path);
+        return result;
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
+
     let pdf_result = (|| -> Result<Vec<u8>, String> {
         let browser = Browser::new(LaunchOptions {
             headless: true,
+            path: default_executable().ok(),
             window_size: Some((PDF_VIEWPORT_WIDTH, PDF_VIEWPORT_HEIGHT)),
             ..Default::default()
         })
@@ -1483,6 +1685,16 @@ pub fn run() {
     let initial_file = initial_file_from_args();
 
     let app = tauri::Builder::default()
+        // This plugin must be registered first. Subsequent launches forward their
+        // file argument to this process instead of creating another application.
+        .plugin(tauri_plugin_single_instance::init(|app, args, cwd| {
+            let cwd = Path::new(&cwd);
+            if let Some(path) = markdown_file_arg_from_launch(args, cwd) {
+                open_markdown_in_main_window(app, path);
+            } else {
+                show_main_window(app);
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
@@ -1596,6 +1808,20 @@ mod tests {
         .unwrap();
 
         assert_eq!(path, PathBuf::from("C:\\notes\\draft.md"));
+    }
+
+    #[test]
+    fn resolves_relative_file_from_second_instance_working_directory() {
+        let path = markdown_file_arg_from_launch(
+            ["LightMarkit", "notes/draft.md"],
+            Path::new("/Users/test/Documents"),
+        )
+        .unwrap();
+
+        assert_eq!(
+            path,
+            PathBuf::from("/Users/test/Documents").join("notes/draft.md")
+        );
     }
 
     #[test]

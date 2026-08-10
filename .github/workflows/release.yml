@@ -27,14 +27,14 @@ jobs:
           $readmeContent = Get-Content README.md -Raw
           $readmeVersionMatch = [regex]::Match(
             $readmeContent,
-            '<!--\s*release-version:\s*([0-9]+\.[0-9]+\.[0-9]+)\s*-->'
+            '<!--\s*release-version:\s*([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?)\s*-->'
           )
 
           if (-not $cargoVersionMatch.Success) {
             throw 'Could not read the package version from src-tauri/Cargo.toml.'
           }
           if (-not $readmeVersionMatch.Success) {
-            throw 'README.md must contain <!-- release-version: X.Y.Z -->.'
+            throw 'README.md must contain <!-- release-version: X.Y.Z[-PRERELEASE] -->.'
           }
 
           $cargoVersion = $cargoVersionMatch.Groups[1].Value
@@ -129,7 +129,7 @@ jobs:
           releaseName: '${{ github.ref_name }}'
           releaseBody: ${{ steps.release-notes.outputs.body }}
           releaseDraft: false
-          prerelease: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
           includeUpdaterJson: ${{ matrix.includeUpdaterJson }}
           updaterJsonPreferNsis: true
           args: --target ${{ matrix.tauriTarget }} --bundles ${{ matrix.bundles }}
