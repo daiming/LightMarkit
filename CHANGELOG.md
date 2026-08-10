@@ -2,19 +2,14 @@
 
 ## [Unreleased]
 
-## [0.4.6-preview.2] - 2026-08-10
-
-### 修复
-
-- macOS 未安装 Chrome 时，原生 WebKit PDF 打印改为独立线程执行，避免同步打印阻塞主事件循环并使导出进度永久停在 98%。
-- 原生 PDF 导出会等待图片和字体完成布局，并在超时后返回明确错误，不再无限等待。
-
-## [0.4.6-preview.1] - 2026-08-10
+## [0.4.6] - 2026-08-10
 
 ### 修复
 
 - 从系统再次打开 Markdown 文件时复用现有 LightMarkit 进程，并将文件交给主窗口，不再启动多个应用实例。
 - macOS 未安装 Chrome 时改用系统原生 WebKit 导出 PDF，无需额外下载浏览器或占用 Chromium 缓存空间。
+- macOS 未安装 Chrome 时，原生 WebKit PDF 打印改为独立线程执行，避免同步打印阻塞主事件循环并使导出进度永久停在 98%。
+- 原生 PDF 导出会等待图片和字体完成布局，并在超时后返回明确错误，不再无限等待。
 
 ## [0.4.5] - 2026-08-08
 
@@ -235,7 +230,8 @@
 - 首次正式发布 LightMarkit。
 - 支持 Markdown 编辑、实时预览、文件管理、自动保存、Mermaid 图表以及 HTML、PDF 导出。
 
-[Unreleased]: https://github.com/zhtdbobo/LightMarkit/compare/v0.4.6-preview.2...HEAD
+[Unreleased]: https://github.com/zhtdbobo/LightMarkit/compare/v0.4.6...HEAD
+[0.4.6]: https://github.com/zhtdbobo/LightMarkit/compare/v0.4.5...v0.4.6
 [0.4.6-preview.2]: https://github.com/zhtdbobo/LightMarkit/compare/v0.4.6-preview.1...v0.4.6-preview.2
 [0.4.6-preview.1]: https://github.com/zhtdbobo/LightMarkit/compare/v0.4.5...v0.4.6-preview.1
 [0.4.5]: https://github.com/zhtdbobo/LightMarkit/compare/v0.4.4...v0.4.5
