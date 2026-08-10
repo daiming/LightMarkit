@@ -20,21 +20,14 @@ use tauri::{
 use tauri_plugin_opener::OpenerExt;
 
 #[cfg(target_os = "macos")]
-use objc2::{runtime::ProtocolObject, AnyThread};
-#[cfg(target_os = "macos")]
-use objc2_app_kit::{
-    NSPaperOrientation, NSPrintInfo, NSPrintJobSavingURL, NSPrintSaveJob, NSPrintingPaginationMode,
-};
-#[cfg(target_os = "macos")]
-use objc2_foundation::{MainThreadMarker, NSCopying, NSObjectProtocol, NSSize, NSString, NSURL};
-#[cfg(target_os = "macos")]
-use objc2_web_kit::WKWebView;
-#[cfg(target_os = "macos")]
-use std::sync::{mpsc, Arc};
-#[cfg(target_os = "macos")]
-use std::time::Duration;
-#[cfg(target_os = "macos")]
-use tauri::{webview::PageLoadEvent, WebviewUrl, WebviewWindowBuilder};
+unsafe extern "C" {
+    fn lightmarkit_webkit_create_pdf(
+        html_path: *const std::ffi::c_char,
+        pdf_path: *const std::ffi::c_char,
+        error_out: *mut *mut std::ffi::c_char,
+    ) -> bool;
+    fn lightmarkit_free_error(error: *mut std::ffi::c_char);
+}
 
 struct FileState {
     current_file: Mutex<Option<PathBuf>>,
@@ -1133,130 +1126,38 @@ fn temporary_native_pdf_path(output_path: &Path) -> PathBuf {
 }
 
 #[cfg(target_os = "macos")]
-async fn receive_native_pdf_event<T: Send + 'static>(
-    receiver: mpsc::Receiver<T>,
-    operation: &'static str,
-) -> Result<T, String> {
-    tauri::async_runtime::spawn_blocking(move || receiver.recv_timeout(Duration::from_secs(20)))
-        .await
-        .map_err(|error| format!("Failed to wait for native PDF {}: {}", operation, error))?
-        .map_err(|error| format!("Timed out waiting for native PDF {}: {}", operation, error))
-}
+fn export_pdf_with_macos_webkit(html_path: &Path, pdf_path: &Path) -> Result<(), String> {
+    use std::ffi::CString;
 
-#[cfg(target_os = "macos")]
-async fn export_pdf_with_macos_webkit(
-    app: &tauri::AppHandle,
-    html_url: &str,
-    output_path: &Path,
-) -> Result<(), String> {
-    let url = html_url
-        .parse()
-        .map_err(|error| format!("Failed to parse temporary HTML URL: {}", error))?;
-    let label = format!(
-        "pdf-export-{}-{}",
-        process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|duration| duration.as_nanos())
-            .unwrap_or(0)
-    );
-    let (load_sender, load_receiver) = mpsc::channel();
-    let load_sender = Arc::new(Mutex::new(Some(load_sender)));
-    let page_load_sender = Arc::clone(&load_sender);
+    let html_path = CString::new(html_path.to_string_lossy().as_bytes())
+        .map_err(|_| "Invalid temporary HTML path".to_string())?;
+    let pdf_path = CString::new(pdf_path.to_string_lossy().as_bytes())
+        .map_err(|_| "Invalid temporary PDF path".to_string())?;
+    let mut error = std::ptr::null_mut();
 
-    let window = WebviewWindowBuilder::new(app, label, WebviewUrl::External(url))
-        .title("LightMarkit PDF Export")
-        .inner_size(PDF_VIEWPORT_WIDTH as f64, PDF_VIEWPORT_HEIGHT as f64)
-        .visible(false)
-        .decorations(false)
-        .on_page_load(move |_window, payload| {
-            if payload.event() == PageLoadEvent::Finished {
-                if let Ok(mut sender) = page_load_sender.lock() {
-                    if let Some(sender) = sender.take() {
-                        let _ = sender.send(());
-                    }
-                }
-            }
-        })
-        .build()
-        .map_err(|error| format!("Failed to create native PDF webview: {}", error))?;
+    // SAFETY: Both C strings remain alive for the duration of the synchronous FFI call.
+    // The Objective-C bridge owns all WebKit objects on the main queue and reports the
+    // result through `error_out` before returning.
+    let success =
+        unsafe { lightmarkit_webkit_create_pdf(html_path.as_ptr(), pdf_path.as_ptr(), &mut error) };
 
-    let temp_pdf_path = temporary_native_pdf_path(output_path);
-    let result = async {
-        receive_native_pdf_event(load_receiver, "page load").await?;
-
-        let (print_sender, print_receiver) = mpsc::channel();
-        let print_output_path = temp_pdf_path.clone();
-        window
-            .with_webview(move |webview| {
-                let result = (|| -> Result<(), String> {
-                    let _main_thread = MainThreadMarker::new().ok_or_else(|| {
-                        "Native PDF export must run on the main thread".to_string()
-                    })?;
-
-                    // SAFETY: Tauri executes `with_webview` on the main thread and
-                    // `inner()` is the WKWebView owned by this hidden export window.
-                    unsafe {
-                        let webview: &WKWebView = &*webview.inner().cast();
-                        if !webview.respondsToSelector(objc2::sel!(printOperationWithPrintInfo:)) {
-                            return Err("Native PDF export requires macOS 11 or later".to_string());
-                        }
-
-                        let print_info = NSPrintInfo::init(NSPrintInfo::alloc());
-                        print_info.setPaperSize(NSSize::new(
-                            PDF_PAPER_WIDTH_INCHES * 72.0,
-                            PDF_PAPER_HEIGHT_INCHES * 72.0,
-                        ));
-                        print_info.setOrientation(NSPaperOrientation::Portrait);
-                        print_info.setTopMargin(PDF_MARGIN_INCHES * 72.0);
-                        print_info.setRightMargin(PDF_MARGIN_INCHES * 72.0);
-                        print_info.setBottomMargin(PDF_MARGIN_INCHES * 72.0);
-                        print_info.setLeftMargin(PDF_MARGIN_INCHES * 72.0);
-                        print_info.setHorizontalPagination(NSPrintingPaginationMode::Fit);
-                        print_info.setVerticalPagination(NSPrintingPaginationMode::Automatic);
-                        print_info.setJobDisposition(NSPrintSaveJob);
-
-                        let output_path = NSString::from_str(&print_output_path.to_string_lossy());
-                        let output_url = NSURL::fileURLWithPath(&output_path);
-                        let settings = print_info.dictionary();
-                        let saving_url_key: &ProtocolObject<dyn NSCopying> =
-                            ProtocolObject::from_ref(NSPrintJobSavingURL);
-                        settings.setObject_forKey(&output_url, saving_url_key);
-
-                        let print_operation = webview.printOperationWithPrintInfo(&print_info);
-                        print_operation.setShowsPrintPanel(false);
-                        print_operation.setShowsProgressPanel(false);
-                        print_operation.setCanSpawnSeparateThread(false);
-
-                        if !print_operation.runOperation() {
-                            return Err("macOS WebKit failed to generate PDF".to_string());
-                        }
-                    }
-
-                    Ok(())
-                })();
-
-                let _ = print_sender.send(result);
-            })
-            .map_err(|error| format!("Failed to access native PDF webview: {}", error))?;
-
-        receive_native_pdf_event(print_receiver, "print operation").await??;
-
-        if !temp_pdf_path.is_file() {
-            return Err("macOS WebKit did not create a PDF file".to_string());
-        }
-
-        fs::rename(&temp_pdf_path, output_path)
-            .map_err(|error| format!("Failed to save native PDF file: {}", error))?;
-        Ok(())
+    if success {
+        return Ok(());
     }
-    .await;
 
-    let _ = window.close();
-    if result.is_err() {
-        let _ = fs::remove_file(&temp_pdf_path);
-    }
-    result
+    let message = if error.is_null() {
+        "Safari WebKit PDF export failed".to_string()
+    } else {
+        // SAFETY: The bridge returns a NUL-terminated allocation and exposes the
+        // matching free function for transferring ownership back to Objective-C.
+        let message = unsafe { std::ffi::CStr::from_ptr(error) }
+            .to_string_lossy()
+            .into_owned();
+        unsafe { lightmarkit_free_error(error) };
+        message
+    };
+
+    Err(format!("Safari PDF 导出失败: {}", message))
 }
 
 #[tauri::command]
@@ -1298,12 +1199,7 @@ fn open_exported_file(app: tauri::AppHandle, file_path: String) -> Result<(), St
 }
 
 #[tauri::command]
-async fn export_pdf(
-    app: tauri::AppHandle,
-    file_path: String,
-    html_content: String,
-    title: String,
-) -> Result<(), String> {
+async fn export_pdf(file_path: String, html_content: String, title: String) -> Result<(), String> {
     let output_path = PathBuf::from(&file_path);
     ensure_export_file_path(&output_path, &["pdf"])?;
     let escaped_title = escape_html_text(&title);
@@ -1330,13 +1226,28 @@ async fn export_pdf(
 
     #[cfg(target_os = "macos")]
     if default_executable().is_err() {
-        let result = export_pdf_with_macos_webkit(&app, &temp_html_url, &output_path).await;
+        let temp_pdf_path = temporary_native_pdf_path(&output_path);
+        let native_html_path = temp_html_path.clone();
+        let native_pdf_path = temp_pdf_path.clone();
+        let native_task = tauri::async_runtime::spawn_blocking(move || {
+            export_pdf_with_macos_webkit(&native_html_path, &native_pdf_path)
+        })
+        .await;
         let _ = fs::remove_file(&temp_html_path);
-        return result;
-    }
+        let result = native_task
+            .map_err(|error| format!("Failed to wait for Safari PDF export: {}", error))?;
 
-    #[cfg(not(target_os = "macos"))]
-    let _ = app;
+        if let Err(error) = result {
+            let _ = fs::remove_file(&temp_pdf_path);
+            return Err(error);
+        }
+
+        fs::rename(&temp_pdf_path, &output_path).map_err(|error| {
+            let _ = fs::remove_file(&temp_pdf_path);
+            format!("Failed to save native PDF file: {}", error)
+        })?;
+        return Ok(());
+    }
 
     let pdf_result = (|| -> Result<Vec<u8>, String> {
         let browser = Browser::new(LaunchOptions {

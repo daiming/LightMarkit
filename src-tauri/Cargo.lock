@@ -2170,16 +2170,13 @@ dependencies = [
 
 [[package]]
 name = "lightmarkit"
-version = "0.4.6-preview.1"
+version = "0.4.6-preview.2"
 dependencies = [
  "base64 0.22.1",
+ "cc",
  "encoding_rs",
  "headless_chrome",
  "notify",
- "objc2",
- "objc2-app-kit",
- "objc2-foundation",
- "objc2-web-kit",
  "serde",
  "serde_json",
  "tauri",
