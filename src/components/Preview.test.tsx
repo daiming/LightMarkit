@@ -1,7 +1,18 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Preview } from './Preview'
+
+// 模拟 Mermaid 渲染：跳过真实库加载，返回带 viewBox 的 SVG 供查看器交互测试使用
+vi.mock('mermaid', () => ({
+  default: {
+    initialize: vi.fn(),
+    render: vi.fn(async () => ({
+      svg: '<svg viewBox="0 0 100 100"><rect width="100" height="100"></rect></svg>',
+      bindFunctions: vi.fn(),
+    })),
+  },
+}))
 
 describe('Preview', () => {
   it('应该渲染预览容器', () => {
@@ -325,5 +336,40 @@ function hello() {
       'aria-expanded',
       'false'
     )
+  })
+
+  it('双击 Mermaid 图表应打开查看器，ESC 应关闭', async () => {
+    render(<Preview content={'```mermaid\ngraph TD; A-->B;\n```'} />)
+
+    // 等待异步 Mermaid 渲染完成（mock 返回带 viewBox 的 SVG）
+    const svg = await waitFor(() => {
+      const element = document.querySelector('.mermaid svg')
+      expect(element).not.toBeNull()
+      return element as SVGSVGElement
+    })
+
+    fireEvent.dblClick(svg)
+
+    const dialog = await screen.findByRole('dialog', { name: '图表查看器' })
+    expect(dialog).toBeInTheDocument()
+    // 查看器必须通过 Portal 挂载到 document.body，脱离预览面板的祖先层叠上下文，
+    // 否则遮罩无法覆盖应用标题栏（.app-header z-index: 100）
+    expect(dialog.parentElement?.isSameNode(document.body)).toBe(true)
+    // 查看器内应注入按原始尺寸克隆的 SVG
+    expect(document.querySelector('.diagram-viewer-svg-host svg')).not.toBeNull()
+
+    fireEvent.keyDown(window, { key: 'Escape' })
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', { name: '图表查看器' })).not.toBeInTheDocument()
+    })
+  })
+
+  it('双击普通文本不应打开图表查看器', () => {
+    const { container } = render(<Preview content="普通文本内容" />)
+
+    fireEvent.dblClick(container.querySelector('.preview-content') as HTMLElement)
+
+    expect(screen.queryByRole('dialog', { name: '图表查看器' })).not.toBeInTheDocument()
   })
 })

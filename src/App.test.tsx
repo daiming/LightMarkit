@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener'
@@ -10,7 +10,7 @@ import { listen } from '@tauri-apps/api/event'
 import App from './App'
 import { scanFolder } from './utils/folderApi'
 import { openExportedFile } from './utils/exportApi'
-import { fileRead, fileWrite, getCurrentFile, markFrontendReady } from './utils/fileApi'
+import { fileRead, fileWrite, getCurrentFile, markFrontendReady, setCurrentFile } from './utils/fileApi'
 import packageInfo from '../package.json'
 
 // Mock Tauri APIs
@@ -131,7 +131,14 @@ describe('App', () => {
     const openFile = async (expectedContent: string) => {
       fireEvent.click(document.querySelector('.menu-trigger') as HTMLElement)
       fireEvent.click(screen.getByRole('menuitem', { name: '打开文件' }))
-      await waitFor(() => expect(screen.getByTestId('editor-container')).toHaveTextContent(expectedContent))
+      // 打开文件默认进入预览模式，先断言预览再切回编辑断言编辑器内容
+      await waitFor(() =>
+        expect(screen.getByTestId('preview-container')).toHaveTextContent(expectedContent)
+      )
+      fireEvent.keyDown(window, { key: 'e', ctrlKey: true })
+      await waitFor(() =>
+        expect(screen.getByTestId('editor-container')).toHaveTextContent(expectedContent)
+      )
     }
 
     await openFile('First document')
@@ -157,8 +164,15 @@ describe('App', () => {
 
     render(<App />)
 
+    // 打开文件默认进入预览模式
     await waitFor(() => {
       expect(fileRead).toHaveBeenCalledWith('C:\\notes\\from-shell.md')
+      expect(screen.getByTestId('preview-container').textContent).toContain('From Shell')
+    })
+
+    fireEvent.keyDown(window, { key: 'e', ctrlKey: true })
+
+    await waitFor(() => {
       expect(screen.getByTestId('editor-container').textContent).toContain('From Shell')
     })
   })
@@ -202,16 +216,16 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: '设置' }))
 
     expect(screen.getByTestId('editor-container')).not.toHaveClass('full-width-editor')
-    fireEvent.keyDown(window, { key: '/', ctrlKey: true })
+    fireEvent.keyDown(window, { key: 'e', ctrlKey: true })
     expect(screen.getByTestId('preview-container')).not.toHaveClass('full-width-preview')
-    fireEvent.keyDown(window, { key: '/', ctrlKey: true })
+    fireEvent.keyDown(window, { key: 'e', ctrlKey: true })
 
     fireEvent.click(screen.getByRole('button', { name: '设置' }))
     fireEvent.click(screen.getByRole('radio', { name: /铺满/ }))
     fireEvent.click(screen.getByRole('button', { name: '设置' }))
 
     expect(screen.getByTestId('editor-container')).toHaveClass('full-width-editor')
-    fireEvent.keyDown(window, { key: '/', ctrlKey: true })
+    fireEvent.keyDown(window, { key: 'e', ctrlKey: true })
     expect(screen.getByTestId('preview-container')).toHaveClass('full-width-preview')
   })
 
@@ -252,7 +266,7 @@ describe('App', () => {
     expect(fireEvent.keyDown(window, { key: '-', ctrlKey: true })).toBe(false)
     expect(contentArea.style.getPropertyValue('--content-font-size')).toBe('20px')
 
-    fireEvent.keyDown(window, { key: '/', ctrlKey: true })
+    fireEvent.keyDown(window, { key: 'e', ctrlKey: true })
     expect(screen.getByTestId('preview-container')).toBeInTheDocument()
     expect(contentArea.style.getPropertyValue('--content-font-size')).toBe('20px')
 
@@ -282,12 +296,14 @@ describe('App', () => {
     const fileButton = screen.getByRole('button', { name: '文件' })
     const exportButton = screen.getByRole('button', { name: '导出' })
     const settingsButton = screen.getByRole('button', { name: '设置' })
+    const viewModeButton = screen.getByRole('button', { name: '切换到预览' })
     const undoButton = screen.getByRole('button', { name: '撤销' })
 
     expect(Array.from(menuBar.children)).toEqual([
       fileButton.closest('.toolbar-menu'),
       exportButton.closest('.toolbar-menu'),
       settingsButton,
+      viewModeButton,
       undoButton,
     ])
     expect(settingsButton).toHaveTextContent('设置')
@@ -302,7 +318,10 @@ describe('App', () => {
     const undoButton = screen.getByRole('button', { name: '撤销' })
     const settingsButton = screen.getByRole('button', { name: '设置' })
     const menuBar = screen.getByLabelText('应用菜单')
-    expect(settingsButton.nextElementSibling).toBe(undoButton)
+    // 设置按钮之后依次是编辑/预览切换按钮和撤销按钮
+    expect(settingsButton.nextElementSibling).toBe(
+      screen.getByRole('button', { name: '切换到预览' })
+    )
     expect(undoButton.parentElement).toBe(menuBar)
     expect(undoButton).toBeDisabled()
 
@@ -322,6 +341,46 @@ describe('App', () => {
       expect(screen.getByTestId('editor-container')).not.toHaveTextContent('abc')
       expect(undoButton).toBeDisabled()
     })
+  })
+
+  it('编辑时输入字符不应重置编辑器滚动位置', async () => {
+    // 通过外部文件变更触发内容状态更新（与输入字符走同一条 tabs 状态更新路径），
+    // 避免测试环境中 CodeMirror 自身 scrollIntoView 对 scrollTop 的干扰
+    let fileChangedHandler: ((event: { payload: string }) => void) | undefined
+    vi.mocked(listen).mockImplementation(async (event, handler) => {
+      if (event === 'file-changed') {
+        fileChangedHandler = handler as unknown as typeof fileChangedHandler
+      }
+      return vi.fn()
+    })
+    const currentPath = 'C:\\notes\\scroll.md'
+    vi.mocked(getCurrentFile).mockResolvedValue(currentPath)
+    vi.mocked(fileRead).mockResolvedValue('# 初始内容')
+
+    render(<App />)
+
+    // 打开文件默认进入预览模式，切回编辑模式
+    await waitFor(() =>
+      expect(screen.getByTestId('preview-container')).toHaveTextContent('初始内容')
+    )
+    fireEvent.keyDown(window, { key: 'e', ctrlKey: true })
+
+    // 等待切换视图触发的滚动恢复回调执行完毕，再模拟用户已滚动到中部
+    await new Promise((resolve) => window.setTimeout(resolve, 50))
+    const scroller = document.querySelector('.cm-scroller') as HTMLElement
+    scroller.scrollTop = 120
+
+    // 外部程序修改文件 → 内容状态更新（等价于输入字符引起的状态链路）
+    vi.mocked(fileRead).mockResolvedValue('# 初始内容 已更新')
+    fileChangedHandler?.({ payload: currentPath })
+
+    await waitFor(() =>
+      expect(screen.getByTestId('editor-container')).toHaveTextContent('已更新')
+    )
+    // 等待潜在的 requestAnimationFrame 恢复回调执行完毕
+    await new Promise((resolve) => window.setTimeout(resolve, 100))
+
+    expect(scroller.scrollTop).toBe(120)
   })
 
   it('应该通过 Tauri Updater 检查、下载并安装新版本', async () => {
@@ -352,7 +411,7 @@ describe('App', () => {
     expect(screen.getByText('软件更新')).toBeInTheDocument()
 
     fireEvent.click(screen.getByRole('link', { name: 'GitHub' }))
-    expect(openUrl).toHaveBeenCalledWith('https://github.com/zhtdbobo/LightMarkit')
+    expect(openUrl).toHaveBeenCalledWith('https://github.com/daiming/LightMarkit')
 
     fireEvent.click(screen.getByRole('button', { name: '检查更新' }))
 
@@ -424,13 +483,38 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: '撤销' })).toHaveAttribute('title', '撤销上一步 (⌘Z)')
     expect(screen.getByRole('button', { name: '切换到预览' })).toHaveAttribute(
       'title',
-      '切换到预览 (⌘/)'
+      '切换到预览 (⌘E)'
     )
 
     fireEvent.click(screen.getByRole('button', { name: '设置' }))
     expect(
       screen.getByRole('heading', { name: '设置' }).closest('.settings-sidebar')
     ).not.toBeNull()
+  })
+
+  it('双击标题栏空白区域应触发最大化/还原，且第二次按下不再启动拖拽', () => {
+    render(<App />)
+
+    const header = document.querySelector('.app-header') as HTMLElement
+
+    // 第一次按下：记录按压并启动窗口拖拽
+    fireEvent.pointerDown(header, { button: 0, detail: 1, clientX: 300, clientY: 10 })
+    expect(mockWindow.startDragging).toHaveBeenCalledTimes(1)
+
+    // 第二次快速按下（间隔与偏移在双击阈值内）：切换最大化，不再启动拖拽
+    fireEvent.pointerDown(header, { button: 0, detail: 2, clientX: 302, clientY: 12 })
+    expect(mockWindow.toggleMaximize).toHaveBeenCalledTimes(1)
+    expect(mockWindow.startDragging).toHaveBeenCalledTimes(1)
+  })
+
+  it('双击标题栏上的按钮不应触发最大化', () => {
+    render(<App />)
+
+    const settingsButton = screen.getByRole('button', { name: '设置' })
+    fireEvent.pointerDown(settingsButton, { button: 0, detail: 1, clientX: 100, clientY: 10 })
+    fireEvent.pointerDown(settingsButton, { button: 0, detail: 2, clientX: 100, clientY: 10 })
+
+    expect(mockWindow.toggleMaximize).not.toHaveBeenCalled()
   })
 
   it('macOS 应该使用 Command 触发应用级快捷键', () => {
@@ -441,7 +525,7 @@ describe('App', () => {
 
     render(<App />)
 
-    fireEvent.keyDown(window, { key: '/', metaKey: true })
+    fireEvent.keyDown(window, { key: 'e', metaKey: true })
     expect(screen.getByTestId('preview-container')).toBeInTheDocument()
 
     fireEvent.keyDown(window, { key: 'o', metaKey: true })
@@ -491,9 +575,10 @@ describe('App', () => {
     await waitFor(() => expect(openFileHandler).toBeDefined())
     openFileHandler?.({ payload: '/Users/test/Documents/from-finder.md' })
 
+    // 打开文件默认进入预览模式
     await waitFor(() => {
       expect(fileRead).toHaveBeenCalledWith('/Users/test/Documents/from-finder.md')
-      expect(screen.getByTestId('editor-container')).toHaveTextContent('From Finder')
+      expect(screen.getByTestId('preview-container')).toHaveTextContent('From Finder')
     })
   })
 
@@ -643,6 +728,118 @@ describe('App', () => {
     expect(open).toHaveBeenCalledWith(expect.objectContaining({ directory: true, multiple: true }))
   })
 
+  it('打开文件所在文件夹后，点击树中同一文件应切回已有 Tab 而不是新建重复 Tab', async () => {
+    const folderPath = 'D:\\WorkProjects\\xizang\\gaize\\HisDemo\\docs\\整体结构设计'
+    const fileA = `${folderPath}\\系统架构.md`
+    const fileB = `${folderPath}\\模块设计.md`
+    const sidebar = () => document.querySelector('.file-sidebar') as HTMLElement
+
+    // 第一步：直接打开文件夹中的某个文件（对话框返回普通路径形式）
+    vi.mocked(open).mockResolvedValueOnce(fileA)
+    vi.mocked(fileRead).mockResolvedValue('# 系统架构内容')
+
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: '文件' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '打开文件' }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: /系统架构\.md/ })).toHaveAttribute('title', fileA)
+    })
+
+    // 第二步：打开该文件所在的文件夹；扫描结果必须返回与对话框一致的普通路径
+    // （此前 Rust 端 canonicalize 会泄漏 `\\?\` 前缀，导致同一文件被视为两个路径）
+    vi.mocked(open).mockResolvedValueOnce(folderPath)
+    vi.mocked(scanFolder).mockResolvedValue([
+      { name: '系统架构.md', path: fileA, is_dir: false },
+      { name: '模块设计.md', path: fileB, is_dir: false },
+    ])
+
+    fireEvent.click(screen.getByRole('button', { name: '文件' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '打开文件夹' }))
+
+    await waitFor(() => {
+      expect(within(sidebar()).getByText('模块设计.md')).toBeInTheDocument()
+    })
+
+    // 第三步：在文件树点击另一个文件 → 新增一个 Tab
+    vi.mocked(fileRead).mockResolvedValue('# 模块设计内容')
+    fireEvent.click(within(sidebar()).getByText('模块设计.md'))
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('tab')).toHaveLength(2)
+    })
+
+    // 第四步：再点击最初的文件 → 应切回已有 Tab（总数不变），且该 Tab 处于选中态
+    fireEvent.click(within(sidebar()).getByText('系统架构.md'))
+
+    await waitFor(() => {
+      const activeTab = screen
+        .getAllByRole('tab')
+        .find((tab) => tab.getAttribute('aria-selected') === 'true')
+      expect(activeTab).toHaveAttribute('title', fileA)
+    })
+    expect(screen.getAllByRole('tab')).toHaveLength(2)
+  })
+
+  it('文件加载在途时切换 Tab，不应被在途加载抢占激活', async () => {
+    const folderPath = 'D:\\docs\\多标签'
+    const pathOf = (name: string) => `${folderPath}\\${name}`
+    vi.mocked(open).mockResolvedValueOnce(folderPath)
+    vi.mocked(scanFolder).mockResolvedValue([
+      { name: 'A.md', path: pathOf('A.md'), is_dir: false },
+      { name: 'B.md', path: pathOf('B.md'), is_dir: false },
+      { name: 'C.md', path: pathOf('C.md'), is_dir: false },
+    ])
+
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: '文件' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '打开文件夹' }))
+
+    const sidebar = () => within(document.querySelector('.file-sidebar') as HTMLElement)
+    await waitFor(() => expect(sidebar().getByText('C.md')).toBeInTheDocument())
+
+    const activeTabTitle = () =>
+      screen
+        .getAllByRole('tab')
+        .find((tab) => tab.getAttribute('aria-selected') === 'true')
+        ?.getAttribute('title')
+
+    // 正常打开 3 个文件，建立 3 个 Tab，当前停留在最后一个（C）
+    for (const name of ['A.md', 'B.md', 'C.md']) {
+      vi.mocked(fileRead).mockResolvedValue(`# ${name}`)
+      fireEvent.click(sidebar().getByText(name))
+      await waitFor(() => expect(activeTabTitle()).toBe(pathOf(name)))
+    }
+    expect(screen.getAllByRole('tab')).toHaveLength(3)
+
+    // 再次点击树中 C：loadFile 走已有 Tab 路径，让其停在 setCurrentFile 的 IPC 等待处
+    let releaseSetCurrentFile: (() => void) | undefined
+    vi.mocked(setCurrentFile).mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          releaseSetCurrentFile = resolve
+        })
+    )
+    fireEvent.click(sidebar().getByText('C.md'))
+    await waitFor(() => expect(releaseSetCurrentFile).toBeDefined())
+
+    // 在途期间用户点击倒数第二个 Tab（B）：这是一次真实的切换，应立即生效
+    fireEvent.click(screen.getByRole('tab', { name: /B\.md/ }))
+    expect(activeTabTitle()).toBe(pathOf('B.md'))
+
+    // 放行 IPC：在途的 loadFile(C) 恢复后不得抢占激活权，
+    // 也不得把当前内容/文件偷换成 C（此前表现为点击 B 却跳到最后一个 C）
+    releaseSetCurrentFile?.()
+
+    // 等待在途加载的恢复微任务执行完毕
+    await new Promise((resolve) => setTimeout(resolve, 50))
+
+    expect(activeTabTitle()).toBe(pathOf('B.md'))
+    expect(screen.getAllByRole('tab')).toHaveLength(3)
+  })
+
   it('应该默认为纯 Markdown 源码编辑模式', () => {
     render(<App />)
     expect(screen.getByTestId('editor-container')).toHaveClass('source-editor')
@@ -650,41 +847,58 @@ describe('App', () => {
     expect(screen.queryByTestId('preview-container')).not.toBeInTheDocument()
   })
 
-  it('应该在内容区提供带快捷键提示的编辑预览切换入口', () => {
+  it('应该在标题栏设置按钮后提供带快捷键提示的编辑预览切换入口', () => {
     render(<App />)
 
     const previewButton = screen.getByRole('button', { name: '切换到预览' })
     expect(previewButton).toHaveTextContent('预览')
-    expect(previewButton).toHaveTextContent('Ctrl+/')
+    expect(previewButton).toHaveTextContent('Ctrl+E')
+    // 切换入口应位于标题栏内（设置按钮之后）
+    expect(previewButton.closest('header')).not.toBeNull()
 
     fireEvent.click(previewButton)
 
     expect(screen.getByTestId('preview-container')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '切换到编辑' })).toHaveTextContent('Ctrl+/')
+    expect(screen.getByRole('button', { name: '切换到编辑' })).toHaveTextContent('Ctrl+E')
+  })
+
+  it('打开 Markdown 文件后应默认进入预览模式', async () => {
+    vi.mocked(open).mockResolvedValueOnce('C:\\notes\\preview-default.md')
+    vi.mocked(fileRead).mockResolvedValue('# 默认预览内容')
+
+    render(<App />)
+
+    fireEvent.click(screen.getByRole('button', { name: '文件' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '打开文件' }))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('preview-container')).toHaveTextContent('默认预览内容')
+    })
+    expect(screen.queryByTestId('editor-container')).not.toBeInTheDocument()
   })
 
   it('应该只使用单栏并且不渲染分割条', () => {
     render(<App />)
     expect(screen.queryByTestId('resizer')).not.toBeInTheDocument()
 
-    fireEvent.keyDown(window, { key: '/', ctrlKey: true })
+    fireEvent.keyDown(window, { key: 'e', ctrlKey: true })
     expect(screen.queryByTestId('resizer')).not.toBeInTheDocument()
   })
 
-  it('应该通过 Ctrl+/ 切换视图模式', () => {
+  it('应该通过 Ctrl+E 切换视图模式', () => {
     render(<App />)
 
-    // 初始为源码编辑模式
+    // 初始（空白文档）为源码编辑模式
     expect(screen.getByTestId('editor-container')).toBeInTheDocument()
     expect(screen.queryByTestId('preview-container')).not.toBeInTheDocument()
 
-    // 第一次按 Ctrl+/ 切换到预览模式
-    fireEvent.keyDown(window, { key: '/', ctrlKey: true })
+    // 第一次按 Ctrl+E 切换到预览模式
+    fireEvent.keyDown(window, { key: 'e', ctrlKey: true })
     expect(screen.queryByTestId('editor-container')).not.toBeInTheDocument()
     expect(screen.getByTestId('preview-container')).toBeInTheDocument()
 
-    // 第二次按 Ctrl+/ 回到源码编辑模式
-    fireEvent.keyDown(window, { key: '/', ctrlKey: true })
+    // 第二次按 Ctrl+E 回到源码编辑模式
+    fireEvent.keyDown(window, { key: 'e', ctrlKey: true })
     expect(screen.getByTestId('editor-container')).toBeInTheDocument()
     expect(screen.queryByTestId('preview-container')).not.toBeInTheDocument()
   })
@@ -694,7 +908,11 @@ describe('App', () => {
     vi.mocked(fileRead).mockResolvedValue('# 未修改')
     render(<App />)
 
-    await waitFor(() => expect(screen.getByText('未修改')).toBeInTheDocument())
+    // 打开文件默认进入预览模式；等预览出现内容（加载流程完成）后再切回编辑模式
+    await waitFor(() =>
+      expect(screen.getByTestId('preview-container')).toHaveTextContent('未修改')
+    )
+    fireEvent.keyDown(window, { key: 'e', ctrlKey: true })
     vi.mocked(fileWrite).mockClear()
 
     const editorContent = screen
@@ -702,9 +920,10 @@ describe('App', () => {
       .querySelector<HTMLElement>('.cm-content')
     expect(editorContent).not.toBeNull()
 
-    fireEvent.keyDown(editorContent as HTMLElement, { key: '/', ctrlKey: true })
+    // 编辑器聚焦状态下切换到预览再切回，不应插入注释或写盘
+    fireEvent.keyDown(editorContent as HTMLElement, { key: 'e', ctrlKey: true })
     expect(screen.getByTestId('preview-container')).toBeInTheDocument()
-    fireEvent.keyDown(window, { key: '/', ctrlKey: true })
+    fireEvent.keyDown(window, { key: 'e', ctrlKey: true })
     expect(screen.getByTestId('editor-container')).toBeInTheDocument()
     expect(screen.getByTestId('editor-container')).not.toHaveTextContent('<!--')
     expect(screen.getByTestId('editor-container')).not.toHaveTextContent('-->')
@@ -730,8 +949,8 @@ describe('App', () => {
     vi.mocked(fileRead).mockResolvedValue('# 第一节\n\n正文\n\n## 第二节\n\n更多正文')
     render(<App />)
 
+    // 打开文件默认进入预览模式，无需再切换
     await waitFor(() => expect(screen.getByRole('button', { name: '第二节' })).toBeInTheDocument())
-    fireEvent.keyDown(window, { key: '/', ctrlKey: true })
 
     const scroller = await screen.findByTestId('preview-container')
     const heading = scroller.querySelector<HTMLElement>('h2[data-source-line="5"]')

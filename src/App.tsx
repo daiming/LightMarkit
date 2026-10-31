@@ -36,7 +36,7 @@ import './App.css'
 
 const APP_STATE_STORAGE_KEY = 'lightmarkit.app-state.v1'
 const APP_VERSION = packageInfo.version
-const REPOSITORY_URL = 'https://github.com/zhtdbobo/LightMarkit'
+const REPOSITORY_URL = 'https://github.com/daiming/LightMarkit'
 const UPDATE_CHECK_TIMEOUT_MS = 30_000
 
 type ViewMode = 'edit' | 'preview'
@@ -810,6 +810,14 @@ function App() {
     (tabId: string) => {
       if (tabId === activeTabIdRef.current) return
 
+      // 用户主动切换 Tab 视为一次导航：作废所有在途的文件加载请求。
+      // loadFile 内部有两个 await（文件读取与监听注册的 IPC 往返），若不在此作废，
+      // 慢一步恢复的 loadFile 会在守卫之后继续执行，创建并激活它自己的 Tab，
+      // 把用户刚选中的 Tab 抢走（表现为点击倒数第二个 Tab 却自动跳到最后一个）。
+      // 注意：loadFile 自身经守卫校验后调用 switchToTab 的路径不受影响——
+      // 其守卫均在调用前执行完毕，此递增只会作废其他更早的在途请求。
+      fileLoadRequestRef.current += 1
+
       captureActiveTabPosition()
       const nextTab = tabsRef.current.find((tab) => tab.id === tabId)
       if (!nextTab) return
@@ -970,8 +978,18 @@ function App() {
     void getCurrentWindow().toggleMaximize()
   }, [])
 
+  /**
+   * 标题栏指针按下处理：拖拽窗口 + 手动双击检测（最大化/还原）。
+   *
+   * 为什么不用 onDoubleClick：第一次按下会立即调用 startDragging()，
+   * 原生窗口拖拽循环（Windows 的 WM_NCLBUTTONDOWN 模态循环）会吞掉后续的
+   * 第二次点击与 DOM dblclick 事件，导致双击最大化永远无法触发。
+   * 因此在这里手动做双击判定：两次按下间隔 ≤500ms（对齐系统双击时间）
+   * 且位置偏移 ≤6px（对齐系统双击区域）视为双击，直接调用 toggleMaximize。
+   */
+  const lastTitleBarPressRef = useRef<{ time: number; x: number; y: number } | null>(null)
   const handleDragWindow = useCallback((event: React.PointerEvent<HTMLElement>) => {
-    if (event.button !== 0 || event.detail > 1) {
+    if (event.button !== 0) {
       return
     }
 
@@ -983,6 +1001,22 @@ function App() {
       return
     }
 
+    const now = Date.now()
+    const previousPress = lastTitleBarPressRef.current
+    const isDoubleClick =
+      previousPress !== null &&
+      now - previousPress.time <= 500 &&
+      Math.abs(event.clientX - previousPress.x) <= 6 &&
+      Math.abs(event.clientY - previousPress.y) <= 6
+
+    if (isDoubleClick) {
+      // 双击：重置记录并切换最大化/还原，不再启动拖拽
+      lastTitleBarPressRef.current = null
+      void getCurrentWindow().toggleMaximize()
+      return
+    }
+
+    lastTitleBarPressRef.current = { time: now, x: event.clientX, y: event.clientY }
     void getCurrentWindow().startDragging()
   }, [])
 
@@ -1008,10 +1042,12 @@ function App() {
     } else {
       const currentTab = tabsRef.current.find((tab) => tab.id === activeTabIdRef.current)
       const shouldReuseBlankTab = currentTab && currentTab.filePath === null && currentTab.content === ''
+      // 打开 Markdown 文件默认进入预览模式（Tab 记忆该模式，切回时保持一致）
       const nextTab = createEditorTab({
         filePath,
         content: fileContent,
         lastSyncedContent: fileContent,
+        viewMode: 'preview',
       })
 
       if (shouldReuseBlankTab) {
@@ -1030,7 +1066,7 @@ function App() {
       lastSyncedContentRef.current = fileContent
       currentFileRef.current = filePath
       setCurrentFilePath(filePath)
-      setViewMode('edit')
+      setViewMode('preview')
     }
     setFileError(null)
   }, [captureActiveTabPosition, switchToTab])
@@ -1120,6 +1156,8 @@ function App() {
   )
 
   const handleNewTab = useCallback(() => {
+    // 新建空白 Tab 同样是一次用户导航：作废在途加载，避免其恢复后抢占新 Tab
+    fileLoadRequestRef.current += 1
     captureActiveTabPosition()
     const nextTab = createEditorTab()
     setTabs((currentTabs) => [...currentTabs, nextTab])
@@ -1136,6 +1174,8 @@ function App() {
   const handleCloseTab = useCallback(
     (event: React.SyntheticEvent, tabId: string) => {
       event.stopPropagation()
+      // 关闭 Tab 后会激活相邻 Tab，同样是一次用户导航：作废在途加载避免抢占
+      fileLoadRequestRef.current += 1
       const currentTabs = tabsRef.current
       const closingIndex = currentTabs.findIndex((tab) => tab.id === tabId)
       if (closingIndex < 0) return
@@ -1683,8 +1723,8 @@ function App() {
         return
       }
 
-      // 模式切换快捷键
-      if (hasPrimaryModifier && e.key === '/') {
+      // 模式切换快捷键（Ctrl+E / ⌘E）
+      if (hasPrimaryModifier && e.key.toLowerCase() === 'e') {
         e.preventDefault()
         e.stopPropagation()
         handleToggleViewMode()
@@ -1758,11 +1798,20 @@ function App() {
     }
   }, [])
 
+  /**
+   * 切换 Tab 或切换视图模式后恢复该 Tab 记忆的滚动位置。
+   *
+   * 注意：依赖只允许是 [activeTabId, viewMode]。此前依赖误写为包含 tabs，
+   * 导致每次输入（tab.content 变化）都会触发本 effect，把编辑器滚动条
+   * 强制设回记录位置（表现为输入任何字符滚动条跳顶 + 界面闪烁）。
+   * tab 数据改从 tabsRef 读取：内容编辑不会改动 editorScrollTop/previewScrollTop，
+   * 在切换时机读取最新值即可满足原语义。
+   */
   useEffect(() => {
-    const tab = tabs.find((item) => item.id === activeTabId)
-    if (!tab) return
-
     const frame = window.requestAnimationFrame(() => {
+      const tab = tabsRef.current.find((item) => item.id === activeTabId)
+      if (!tab) return
+
       const view = editorViewsRef.current.get(activeTabId)
       if (view) {
         view.scrollDOM.scrollTop = tab.editorScrollTop
@@ -1775,7 +1824,7 @@ function App() {
     })
 
     return () => window.cancelAnimationFrame(frame)
-  }, [activeTabId, tabs, viewMode])
+  }, [activeTabId, viewMode])
 
   const handleOutlineItemClick = useCallback(
     (item: OutlineItem) => {
@@ -2041,7 +2090,7 @@ function App() {
         writing: '正在写入文件…',
       }[exportStatus.phase]
     : ''
-  const toggleViewShortcut = getShortcutLabel(isMacOS, '/')
+  const toggleViewShortcut = getShortcutLabel(isMacOS, 'E')
   const operationVerb = '导出'
   const toggleViewLabel = viewMode === 'edit' ? '切换到预览' : '切换到编辑'
 
@@ -2137,6 +2186,22 @@ function App() {
             aria-pressed={isSettingsPageOpen}
           >
             设置
+          </button>
+
+          {/* 编辑/预览切换入口：位于设置按钮之后，快捷键 Ctrl+E / ⌘E */}
+          <button
+            type="button"
+            className="menu-trigger view-mode-trigger"
+            onClick={() => {
+              setOpenMenu(null)
+              setIsSettingsPageOpen(false)
+              handleToggleViewMode()
+            }}
+            aria-label={toggleViewLabel}
+            title={`${toggleViewLabel} (${toggleViewShortcut})`}
+          >
+            {viewMode === 'edit' ? '预览' : '编辑'}
+            <kbd>{toggleViewShortcut}</kbd>
           </button>
 
           <button
@@ -2378,16 +2443,6 @@ function App() {
                   </div>
                 </div>
                 <div className="document-view-area">
-                  <button
-                    type="button"
-                    className="view-mode-switch"
-                    onClick={handleToggleViewMode}
-                    aria-label={toggleViewLabel}
-                    title={`${toggleViewLabel} (${toggleViewShortcut})`}
-                  >
-                    <span>{viewMode === 'edit' ? '预览' : '编辑'}</span>
-                    <kbd>{toggleViewShortcut}</kbd>
-                  </button>
                   {tabs.map((tab) => {
                     const isActive = tab.id === activeTabId
                     const tabViewMode = isActive ? viewMode : tab.viewMode

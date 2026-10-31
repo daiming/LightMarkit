@@ -81,7 +81,11 @@ describe('App window close behavior', () => {
 
     render(<App />)
 
-    await waitFor(() => expect(fileRead).toHaveBeenCalledWith(currentPath))
+    // 打开文件默认进入预览模式；等预览出现内容（加载流程完成）后再切回编辑修改内容
+    await waitFor(() =>
+      expect(screen.getByTestId('preview-container')).toHaveTextContent('Draft')
+    )
+    fireEvent.keyDown(window, { key: 'e', ctrlKey: true })
     const editorElement = screen.getByTestId('editor-container').querySelector('.cm-content')
     await user.click(editorElement!)
     await user.keyboard(' updated')

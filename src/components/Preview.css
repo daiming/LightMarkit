@@ -70,32 +70,38 @@
   line-height: 1.25;
 }
 
+/* 标题分级着色：色值取自编辑器代码 token 色板，保持两侧观感统一 */
 .preview-container h1 {
   padding-bottom: 0.3em;
+  color: #1a73e8;
   font-size: 2em;
   border-bottom: 1px solid #e5e5e5;
 }
 
 .preview-container h2 {
   padding-bottom: 0.3em;
+  color: #026aa2;
   font-size: 1.5em;
   border-bottom: 1px solid #e5e5e5;
 }
 
 .preview-container h3 {
+  color: #7f56d9;
   font-size: 1.25em;
 }
 
 .preview-container h4 {
+  color: #b54708;
   font-size: 1em;
 }
 
 .preview-container h5 {
+  color: #067647;
   font-size: 0.875em;
 }
 
 .preview-container h6 {
-  color: #666666;
+  color: #5f6368;
   font-size: 0.85em;
 }
 
@@ -155,26 +161,29 @@
   vertical-align: super;
 }
 
+/* 行内代码：暖色调文字配浅暖底，与代码块 token 风格呼应；
+   字号与正文一致（此前 85% 过小，用户要求代码文字至少与正文等大） */
 .preview-container code {
   padding: 0.2em 0.4em;
   margin: 0;
   overflow-wrap: anywhere;
-  color: #222222;
+  color: #c4320a;
   font-family:
     ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
-  font-size: 85%;
+  font-size: 100%;
   word-break: break-word;
-  background-color: #f5f5f5;
+  background-color: #fdf3f2;
   border-radius: 3px;
 }
 
+/* 代码块：字号与正文一致，不再缩小（此前 85% 显得过小） */
 .preview-container pre {
   max-width: 100%;
   padding: 1em;
   overflow-x: auto;
   overflow-y: hidden;
-  font-size: 85%;
-  line-height: 1.45;
+  font-size: 100%;
+  line-height: 1.5;
   word-break: normal;
   overflow-wrap: normal;
   white-space: pre;
@@ -336,11 +345,85 @@
 .preview-container pre code {
   padding: 0;
   margin: 0;
+  /* 代码块文字不继承行内代码的暖色，使用中性色作为 token 默认前景 */
+  color: #24292f;
   overflow-wrap: normal;
   word-break: normal;
   white-space: inherit;
   background-color: transparent;
   border-radius: 0;
+}
+
+/*
+ * highlight.js token 配色。
+ * 色值与编辑器 CodeMirror 色板保持一致（见 Editor.css 的 cm-code-token-* 规则）。
+ * 注意：新增或调整 token 颜色时，必须同步更新 src-tauri/src/lib.rs 中
+ * EXPORT_DOCUMENT_STYLE 的镜像规则，否则导出的 HTML/PDF 会与预览产生色差。
+ */
+.preview-container pre code .hljs-keyword,
+.preview-container pre code .hljs-selector-tag {
+  color: #7f56d9;
+  font-weight: 600;
+}
+
+.preview-container pre code .hljs-string,
+.preview-container pre code .hljs-regexp,
+.preview-container pre code .hljs-quote {
+  color: #067647;
+}
+
+.preview-container pre code .hljs-number,
+.preview-container pre code .hljs-literal,
+.preview-container pre code .hljs-symbol {
+  color: #175cd3;
+}
+
+.preview-container pre code .hljs-comment,
+.preview-container pre code .hljs-meta,
+.preview-container pre code .hljs-doctag {
+  color: #667085;
+  font-style: italic;
+}
+
+.preview-container pre code .hljs-type,
+.preview-container pre code .hljs-built_in,
+.preview-container pre code .hljs-name,
+.preview-container pre code .hljs-title.class_,
+.preview-container pre code .hljs-title.class {
+  color: #b54708;
+}
+
+.preview-container pre code .hljs-title,
+.preview-container pre code .hljs-title.function_,
+.preview-container pre code .hljs-title.function,
+.preview-container pre code .hljs-attr,
+.preview-container pre code .hljs-attribute,
+.preview-container pre code .hljs-property,
+.preview-container pre code .hljs-selector-attr,
+.preview-container pre code .hljs-selector-class,
+.preview-container pre code .hljs-selector-id {
+  color: #026aa2;
+}
+
+.preview-container pre code .hljs-operator,
+.preview-container pre code .hljs-variable.language_ {
+  color: #c4320a;
+}
+
+.preview-container pre code .hljs-section {
+  color: #1a73e8;
+  font-weight: 600;
+}
+
+/* diff 高亮：增删行给语义化的绿/红文字色与浅色底纹 */
+.preview-container pre code .hljs-addition {
+  color: #067647;
+  background-color: #e6f4ea;
+}
+
+.preview-container pre code .hljs-deletion {
+  color: #c4320a;
+  background-color: #fef1f0;
 }
 
 .preview-container ul,
@@ -381,12 +464,13 @@
   opacity: 1;
 }
 
+/* 引用块：紫色左边线 + 浅紫底，与标题三级色呼应 */
 .preview-container blockquote {
   padding: 0 1em;
   margin: 0 0 1em 0;
   color: #555555;
-  background-color: #f7f7f7;
-  border-left: 4px solid #dddddd;
+  background-color: #f8f9fe;
+  border-left: 4px solid #7f56d9;
 }
 
 .preview-container blockquote > :first-child {
@@ -419,11 +503,12 @@
   border: 1px solid #dddddd;
 }
 
+/* 表头：蓝色系底色与文字，形成清晰的列头层次 */
 .preview-container table th {
-  color: #222222;
+  color: #174ea6;
   font-weight: 600;
   text-align: left;
-  background-color: #f7f7f7;
+  background-color: #e8f0fe;
 }
 
 .preview-container table tr {
@@ -454,6 +539,7 @@
   margin: 16px 0;
   overflow-x: auto;
   text-align: center;
+  cursor: zoom-in; /* 提示可双击放大查看 */
   background-color: #ffffff;
   border: 1px solid #dddddd;
   border-radius: 8px;
@@ -469,6 +555,7 @@
 
 .preview-container .mermaid[data-mermaid-error='true'] {
   text-align: left;
+  cursor: default; /* 错误态无 SVG，双击不触发查看器 */
   background-color: #fff8f8;
   border-color: #e5b4b4;
 }

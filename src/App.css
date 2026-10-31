@@ -675,24 +675,11 @@ body,
   overflow: hidden;
 }
 
-.view-mode-switch {
-  position: absolute;
-  top: 12px;
-  right: 18px;
-  z-index: 20;
+/* 编辑/预览切换入口：位于标题栏设置按钮之后的内联按钮（基于 menu-trigger 扩展布局） */
+.view-mode-trigger {
   display: inline-flex;
-  gap: 8px;
+  gap: 7px;
   align-items: center;
-  min-height: 30px;
-  padding: 4px 9px 4px 11px;
-  color: #4b5563;
-  font: inherit;
-  font-size: 12px;
-  background: rgba(255, 255, 255, 0.94);
-  border: 1px solid #d8dee8;
-  border-radius: 7px;
-  box-shadow: 0 2px 8px rgba(31, 41, 55, 0.08);
-  cursor: pointer;
 }
 
 .tab-view-panel {
@@ -712,15 +699,7 @@ body,
   pointer-events: auto;
 }
 
-.view-mode-switch:hover,
-.view-mode-switch:focus-visible {
-  color: #174ea6;
-  background: #f4f8ff;
-  border-color: #9fc2f1;
-  outline: none;
-}
-
-.view-mode-switch kbd {
+.view-mode-trigger kbd {
   padding: 1px 5px;
   color: #6b7280;
   font-family: inherit;
@@ -1652,21 +1631,7 @@ body,
     background-color: #3e3e42;
   }
 
-  .view-mode-switch {
-    color: #d4d4d4;
-    background: rgba(37, 37, 38, 0.94);
-    border-color: #4b4b4d;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
-  }
-
-  .view-mode-switch:hover,
-  .view-mode-switch:focus-visible {
-    color: #ffffff;
-    background: #2f3f52;
-    border-color: #5d85b5;
-  }
-
-  .view-mode-switch kbd {
+  .view-mode-trigger kbd {
     color: #c7c7c7;
     background: #333333;
     border-color: #5a5a5a;

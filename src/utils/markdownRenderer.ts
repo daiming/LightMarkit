@@ -1,6 +1,9 @@
 import MarkdownIt from 'markdown-it'
 import footnote from 'markdown-it-footnote'
 import taskLists from 'markdown-it-task-lists'
+// highlight.js common 子集：约 35 种常用语言（ts/js、python、rust、bash、json 等），
+// 自带别名映射（ts→typescript、py→python、sh→bash 等），且按需引入可显著减小打包体积
+import hljs from 'highlight.js/lib/common'
 import { readImageAsDataUrl } from './imageApi'
 
 interface MarkdownRenderOptions {
@@ -340,12 +343,41 @@ export function resolveLocalImagePath(src: string | null, currentFile?: string |
   return resolveRelativeImagePath(cleanSrc, currentFile)
 }
 
+/**
+ * 围栏代码块语法高亮（highlight.js）。
+ *
+ * 职责与约束：
+ * - 仅对已注册语言生效，未注册语言或高亮异常时返回空串，
+ *   markdown-it 会退回默认的 HTML 转义，保证任何输入都得到安全的纯文本回退；
+ * - highlight.js 输出自带 HTML 转义，可安全嵌入预览与导出 HTML；
+ * - ignoreIllegals 防止个别语法在非法片段上抛错导致整块渲染失败。
+ *
+ * @param code 围栏代码块的原始内容
+ * @param language 围栏信息字符串中的首个语言词（markdown-it 已按空白切分）
+ * @returns 高亮后的 HTML 片段；空串表示交由 markdown-it 默认转义
+ */
+function highlightCodeBlock(code: string, language: string): string {
+  const lang = language.trim().toLowerCase()
+
+  if (!lang || !hljs.getLanguage(lang)) {
+    return ''
+  }
+
+  try {
+    return hljs.highlight(code, { language: lang, ignoreIllegals: true }).value
+  } catch {
+    return ''
+  }
+}
+
 // 创建 markdown-it 实例并配置 GFM 插件
 const md = new MarkdownIt({
   html: false,
   linkify: true,
   typographer: true,
   breaks: true,
+  // 围栏代码块语法高亮：着色只影响渲染产物（预览/导出 HTML），不会写回 Markdown 源文件
+  highlight: (code, language) => highlightCodeBlock(code, language),
 })
   // 预览为只读视图，复选框仅作展示；勾选请在编辑器中进行
   .use(taskLists, {
@@ -364,7 +396,8 @@ md.block.ruler.before('fence', 'math_block', (state, startLine, _endLine, silent
   if (!firstLine.startsWith('$$')) return false
 
   let nextLine = startLine + 1
-  let content = ''
+  // 下方 if/else 各可达分支都会先赋值（else 分支直接 return），无需无意义的初始值
+  let content: string
 
   if (firstLine.length > 4 && firstLine.endsWith('$$')) {
     content = firstLine.slice(2, -2).trim()
@@ -464,7 +497,8 @@ md.renderer.rules.fence = (tokens, idx, options, env, self) => {
   if (info === 'mermaid') {
     const sourceLine = token.attrGet('data-source-line')
     const sourceAttr = sourceLine ? ` data-source-line="${sourceLine}"` : ''
-    return `<div class="mermaid"${sourceAttr}>${md.utils.escapeHtml(code)}</div>`
+    // title 提示用户可双击放大查看；错误态（无 SVG）时双击不会触发查看器
+    return `<div class="mermaid"${sourceAttr} title="双击放大查看">${md.utils.escapeHtml(code)}</div>`
   }
 
   return defaultFenceRenderer(tokens, idx, options, env, self)

@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-31
+
+### 新增
+
+- 双击标题栏空白区域可最大化或还原窗口。
+- 打开 Markdown 文件后默认进入预览模式（各 Tab 记忆自己的视图模式，空白新文档仍默认编辑模式）。
+- 预览代码块支持语法高亮（highlight.js，覆盖约 35 种常用语言），配色与编辑器保持一致；未识别语言回退纯文本，且着色不会写回 Markdown 源文件。
+- 预览整体彩色主题：标题分级着色，引用块、表头、行内代码采用与编辑器统一的色板；导出 HTML/PDF 与预览配色一致。
+- 双击 Mermaid 图表可打开全窗口查看器无损放大查看：SVG 矢量缩放，支持滚轮缩放、拖拽平移、适应窗口/100% 切换，ESC 或双击背景关闭。
+
+### 改进
+
+- 预览中代码块与行内代码的字号由正文的 85% 提升到与正文一致，导出 HTML/PDF 同步调整。
+- 编辑/预览切换入口从内容区右上角移至标题栏设置按钮之后，快捷键由 `Ctrl+/`（macOS `⌘/`）调整为 `Ctrl+E`（macOS `⌘E`），macOS 原生菜单加速器同步更新。
+
+### 修复
+
+- 修复编辑模式下输入任意字符导致编辑器滚动条跳回顶部并伴随界面闪烁的问题：滚动位置恢复 effect 此前错误地依赖 tabs 状态，每次内容变化都会触发恢复；现仅在切换 Tab 或切换视图模式时执行。
+- 修复先打开文件再打开其所在文件夹后，点击文件树中的同一文件会新建重复 Tab、无法切回对应文档预览的问题：Windows 上目录扫描返回的 `\\?\` 前缀路径已统一还原为与文件对话框一致的普通形式。
+- 修复文件加载尚在进行时切换 Tab 会被在途加载抢占激活的问题（表现为打开 3 个文件后点击倒数第二个 Tab 会自动跳到最后一个 Tab）：用户主动切换、新建或关闭 Tab 时作废在途的文件加载请求。
+- 修复图表查看器两个问题：缩放改为按布局尺寸驱动 SVG 重新栅格化，任意倍率下保持矢量级清晰（此前 transform 缩放会放大位图导致模糊）；工具栏显式置于交互舞台之上，恢复可点击（此前被全窗口舞台遮挡）。
+
 ## [0.4.6] - 2026-08-10
 
 ### 修复
@@ -230,21 +252,22 @@
 - 首次正式发布 LightMarkit。
 - 支持 Markdown 编辑、实时预览、文件管理、自动保存、Mermaid 图表以及 HTML、PDF 导出。
 
-[Unreleased]: https://github.com/zhtdbobo/LightMarkit/compare/v0.4.6...HEAD
-[0.4.6]: https://github.com/zhtdbobo/LightMarkit/compare/v0.4.5...v0.4.6
-[0.4.6-preview.2]: https://github.com/zhtdbobo/LightMarkit/compare/v0.4.6-preview.1...v0.4.6-preview.2
-[0.4.6-preview.1]: https://github.com/zhtdbobo/LightMarkit/compare/v0.4.5...v0.4.6-preview.1
-[0.4.5]: https://github.com/zhtdbobo/LightMarkit/compare/v0.4.4...v0.4.5
-[0.4.4]: https://github.com/zhtdbobo/LightMarkit/compare/v0.4.3...v0.4.4
-[0.4.3]: https://github.com/zhtdbobo/LightMarkit/compare/v0.4.2...v0.4.3
-[0.4.2]: https://github.com/zhtdbobo/LightMarkit/compare/v0.4.1...v0.4.2
-[0.4.1]: https://github.com/zhtdbobo/LightMarkit/compare/v0.4.0...v0.4.1
-[0.4.0]: https://github.com/zhtdbobo/LightMarkit/compare/v0.3.5...v0.4.0
-[0.3.5]: https://github.com/zhtdbobo/LightMarkit/compare/v0.3.4...v0.3.5
-[0.3.4]: https://github.com/zhtdbobo/LightMarkit/compare/v0.3.3...v0.3.4
-[0.3.3]: https://github.com/zhtdbobo/LightMarkit/compare/v0.3.2...v0.3.3
-[0.3.2]: https://github.com/zhtdbobo/LightMarkit/compare/v0.3.1...v0.3.2
-[0.3.1]: https://github.com/zhtdbobo/LightMarkit/compare/v0.3.0...v0.3.1
-[0.3.0]: https://github.com/zhtdbobo/LightMarkit/compare/v0.2.0...v0.3.0
-[0.2.0]: https://github.com/zhtdbobo/LightMarkit/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/zhtdbobo/LightMarkit/releases/tag/v0.1.0
+[Unreleased]: https://github.com/daiming/LightMarkit/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/daiming/LightMarkit/compare/v0.4.6...v0.5.0
+[0.4.6]: https://github.com/daiming/LightMarkit/compare/v0.4.5...v0.4.6
+[0.4.6-preview.2]: https://github.com/daiming/LightMarkit/compare/v0.4.6-preview.1...v0.4.6-preview.2
+[0.4.6-preview.1]: https://github.com/daiming/LightMarkit/compare/v0.4.5...v0.4.6-preview.1
+[0.4.5]: https://github.com/daiming/LightMarkit/compare/v0.4.4...v0.4.5
+[0.4.4]: https://github.com/daiming/LightMarkit/compare/v0.4.3...v0.4.4
+[0.4.3]: https://github.com/daiming/LightMarkit/compare/v0.4.2...v0.4.3
+[0.4.2]: https://github.com/daiming/LightMarkit/compare/v0.4.1...v0.4.2
+[0.4.1]: https://github.com/daiming/LightMarkit/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/daiming/LightMarkit/compare/v0.3.5...v0.4.0
+[0.3.5]: https://github.com/daiming/LightMarkit/compare/v0.3.4...v0.3.5
+[0.3.4]: https://github.com/daiming/LightMarkit/compare/v0.3.3...v0.3.4
+[0.3.3]: https://github.com/daiming/LightMarkit/compare/v0.3.2...v0.3.3
+[0.3.2]: https://github.com/daiming/LightMarkit/compare/v0.3.1...v0.3.2
+[0.3.1]: https://github.com/daiming/LightMarkit/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/daiming/LightMarkit/compare/v0.2.0...v0.3.0
+[0.2.0]: https://github.com/daiming/LightMarkit/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/daiming/LightMarkit/releases/tag/v0.1.0

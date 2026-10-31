@@ -790,85 +790,108 @@ async fn watch_current_file(
     Ok(())
 }
 
+/// 将 Windows 上 `fs::canonicalize` 产生的 verbatim 路径前缀还原为普通路径形式。
+///
+/// 背景：canonicalize 在 Windows 返回 `\\?\D:\...`（本地盘）或 `\\?\UNC\server\...`（网络盘），
+/// 而文件/文件夹对话框返回的是普通形式。两种形式混用会导致前端按路径字符串匹配
+/// 已有 Tab、高亮当前文件时把同一文件当成两个不同路径（例如先打开文件再打开其所在
+/// 文件夹后，点击树中文件会新建重复 Tab，而不是切回已有文档的预览）。
+/// 因此目录扫描结果序列化时统一去掉 verbatim 前缀，保持与对话框一致的路径形式。
+fn strip_verbatim_prefix(path: &Path) -> String {
+    let text = path.to_string_lossy();
+
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else if let Some(rest) = text.strip_prefix(r"\\?\") {
+        rest.to_string()
+    } else {
+        text.to_string()
+    }
+}
+
+/// 递归扫描目录中的 Markdown 文件与包含 Markdown 的子目录（模块级以便单元测试）。
+///
+/// 说明：内部用 canonicalize 的结果做去重与目录读取（防止符号链接循环），但返回给
+/// 前端的路径会经 `strip_verbatim_prefix` 还原为普通形式，见该函数的文档说明。
+fn scan_directory(
+    dir_path: &Path,
+    depth: usize,
+    visited: &mut HashSet<PathBuf>,
+    markdown_file_count: &mut usize,
+) -> Result<Vec<FileInfo>, String> {
+    if depth > MAX_SCAN_DEPTH {
+        return Ok(Vec::new());
+    }
+
+    let canonical_dir =
+        fs::canonicalize(dir_path).map_err(|e| format!("Failed to resolve directory: {}", e))?;
+
+    if !visited.insert(canonical_dir.clone()) {
+        return Ok(Vec::new());
+    }
+
+    let mut files = Vec::new();
+
+    let entries =
+        fs::read_dir(&canonical_dir).map_err(|e| format!("Failed to read directory: {}", e))?;
+
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        let metadata =
+            fs::symlink_metadata(&path).map_err(|e| format!("Failed to read entry: {}", e))?;
+
+        if name.starts_with('.') || name == "node_modules" || name == "target" {
+            continue;
+        }
+
+        if metadata.file_type().is_symlink() {
+            continue;
+        }
+
+        if metadata.is_dir() {
+            let children = scan_directory(&path, depth + 1, visited, markdown_file_count)?;
+            if !children.is_empty() {
+                files.push(FileInfo {
+                    name,
+                    path: strip_verbatim_prefix(&path),
+                    is_dir: true,
+                    children: Some(children),
+                });
+            }
+        } else if metadata.is_file() && is_markdown_file_path(&path) {
+            if *markdown_file_count >= MAX_SCANNED_MARKDOWN_FILES {
+                return Err(format!(
+                    "Folder scan exceeded {} Markdown files",
+                    MAX_SCANNED_MARKDOWN_FILES
+                ));
+            }
+
+            *markdown_file_count += 1;
+            files.push(FileInfo {
+                name,
+                path: strip_verbatim_prefix(&path),
+                is_dir: false,
+                children: None,
+            });
+        }
+    }
+
+    files.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.name.cmp(&b.name),
+    });
+
+    Ok(files)
+}
+
 #[tauri::command]
 async fn scan_folder(folder_path: String) -> Result<Vec<FileInfo>, String> {
     let path = PathBuf::from(&folder_path);
     if !path.is_dir() {
         return Err("Path is not a directory".to_string());
-    }
-
-    fn scan_directory(
-        dir_path: &Path,
-        depth: usize,
-        visited: &mut HashSet<PathBuf>,
-        markdown_file_count: &mut usize,
-    ) -> Result<Vec<FileInfo>, String> {
-        if depth > MAX_SCAN_DEPTH {
-            return Ok(Vec::new());
-        }
-
-        let canonical_dir = fs::canonicalize(dir_path)
-            .map_err(|e| format!("Failed to resolve directory: {}", e))?;
-
-        if !visited.insert(canonical_dir.clone()) {
-            return Ok(Vec::new());
-        }
-
-        let mut files = Vec::new();
-
-        let entries =
-            fs::read_dir(&canonical_dir).map_err(|e| format!("Failed to read directory: {}", e))?;
-
-        for entry in entries {
-            let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
-            let path = entry.path();
-            let name = entry.file_name().to_string_lossy().to_string();
-            let metadata =
-                fs::symlink_metadata(&path).map_err(|e| format!("Failed to read entry: {}", e))?;
-
-            if name.starts_with('.') || name == "node_modules" || name == "target" {
-                continue;
-            }
-
-            if metadata.file_type().is_symlink() {
-                continue;
-            }
-
-            if metadata.is_dir() {
-                let children = scan_directory(&path, depth + 1, visited, markdown_file_count)?;
-                if !children.is_empty() {
-                    files.push(FileInfo {
-                        name,
-                        path: path.to_string_lossy().to_string(),
-                        is_dir: true,
-                        children: Some(children),
-                    });
-                }
-            } else if metadata.is_file() && is_markdown_file_path(&path) {
-                if *markdown_file_count >= MAX_SCANNED_MARKDOWN_FILES {
-                    return Err(format!(
-                        "Folder scan exceeded {} Markdown files",
-                        MAX_SCANNED_MARKDOWN_FILES
-                    ));
-                }
-
-                *markdown_file_count += 1;
-                files.push(FileInfo {
-                    name,
-                    path: path.to_string_lossy().to_string(),
-                    is_dir: false,
-                    children: None,
-                });
-            }
-        }
-
-        files.sort_by(|a, b| match (a.is_dir, b.is_dir) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.name.cmp(&b.name),
-        });
-
-        Ok(files)
     }
 
     let mut visited = HashSet::new();
@@ -904,19 +927,20 @@ h1, h2, h3, h4, h5, h6 {
 }
 h1 {
     font-size: 2em;
+    color: #1a73e8;
     border-bottom: 1px solid #e5e5e5;
     padding-bottom: 0.3em;
 }
 h2 {
     font-size: 1.5em;
-    color: #222222;
+    color: #026aa2;
     border-bottom: 1px solid #e5e5e5;
     padding-bottom: 0.3em;
 }
-h3 { font-size: 1.25em; color: #222222; }
-h4 { font-size: 1em; color: #222222; }
-h5 { font-size: 0.875em; color: #222222; }
-h6 { font-size: 0.85em; color: #666666; }
+h3 { font-size: 1.25em; color: #7f56d9; }
+h4 { font-size: 1em; color: #b54708; }
+h5 { font-size: 0.875em; color: #067647; }
+h6 { font-size: 0.85em; color: #5f6368; }
 p { margin-top: 0; margin-bottom: 1em; }
 strong { font-weight: 600; color: #111111; }
 em { font-style: italic; color: inherit; }
@@ -925,9 +949,9 @@ a:hover { color: #000000; text-decoration: underline; }
 code {
     padding: 0.2em 0.4em;
     margin: 0;
-    font-size: 85%;
-    color: #222222;
-    background-color: #f5f5f5;
+    font-size: 100%;
+    color: #c4320a;
+    background-color: #fdf3f2;
     border-radius: 3px;
     overflow-wrap: anywhere;
     word-break: break-word;
@@ -938,8 +962,8 @@ pre {
     max-width: 100%;
     overflow-x: hidden;
     overflow-y: auto;
-    font-size: 85%;
-    line-height: 1.45;
+    font-size: 100%;
+    line-height: 1.5;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     word-break: break-word;
@@ -951,10 +975,29 @@ pre {
 pre code {
     padding: 0;
     margin: 0;
+    color: #24292f;
     white-space: inherit;
     background-color: transparent;
     border-radius: 0;
 }
+/*
+ * highlight.js token 配色（导出镜像）。
+ * 色值必须与 src/components/Preview.css 中 scoped 于 .preview-container pre code
+ * 的 token 规则保持一致，调整任一侧时需同步另一侧，否则导出与预览会产生色差。
+ */
+pre code .hljs-keyword, pre code .hljs-selector-tag { color: #7f56d9; font-weight: 600; }
+pre code .hljs-string, pre code .hljs-regexp, pre code .hljs-quote { color: #067647; }
+pre code .hljs-number, pre code .hljs-literal, pre code .hljs-symbol { color: #175cd3; }
+pre code .hljs-comment, pre code .hljs-meta, pre code .hljs-doctag { color: #667085; font-style: italic; }
+pre code .hljs-type, pre code .hljs-built_in, pre code .hljs-name,
+pre code .hljs-title.class_, pre code .hljs-title.class { color: #b54708; }
+pre code .hljs-title, pre code .hljs-title.function_, pre code .hljs-title.function,
+pre code .hljs-attr, pre code .hljs-attribute, pre code .hljs-property,
+pre code .hljs-selector-attr, pre code .hljs-selector-class, pre code .hljs-selector-id { color: #026aa2; }
+pre code .hljs-operator, pre code .hljs-variable.language_ { color: #c4320a; }
+pre code .hljs-section { color: #1a73e8; font-weight: 600; }
+pre code .hljs-addition { color: #067647; background-color: #e6f4ea; }
+pre code .hljs-deletion { color: #c4320a; background-color: #fef1f0; }
 ul, ol {
     margin-top: 0;
     margin-bottom: 1em;
@@ -977,8 +1020,8 @@ blockquote {
     margin: 0 0 1em 0;
     padding: 0 1em;
     color: #555555;
-    border-left: 4px solid #dddddd;
-    background-color: #f7f7f7;
+    border-left: 4px solid #7f56d9;
+    background-color: #f8f9fe;
     page-break-inside: avoid;
 }
 blockquote > :first-child { margin-top: 0; }
@@ -1004,8 +1047,8 @@ table th, table td {
 }
 table th {
     font-weight: 600;
-    color: #222222;
-    background-color: #f7f7f7;
+    color: #174ea6;
+    background-color: #e8f0fe;
 }
 table thead {
     display: table-row-group;
@@ -1563,7 +1606,7 @@ fn build_macos_menu(app: &tauri::App<tauri::Wry>) -> tauri::Result<Menu<tauri::W
         "toggle-view",
         "切换编辑/预览",
         true,
-        Some("CmdOrCtrl+/"),
+        Some("CmdOrCtrl+E"),
     )?;
     let view_menu = Submenu::with_items(app, "视图", true, &[&toggle_view])?;
 
@@ -1832,5 +1875,55 @@ mod tests {
             url,
             "file:///C:/Users/Lenovo/AppData/Local/Temp/light%20markit%20export.html"
         );
+    }
+
+    #[test]
+    fn strips_windows_verbatim_prefix_from_paths() {
+        assert_eq!(
+            strip_verbatim_prefix(Path::new(r"\\?\D:\docs\整体结构设计\架构.md")),
+            r"D:\docs\整体结构设计\架构.md"
+        );
+        assert_eq!(
+            strip_verbatim_prefix(Path::new(r"\\?\UNC\server\share\docs\a.md")),
+            r"\\server\share\docs\a.md"
+        );
+        assert_eq!(
+            strip_verbatim_prefix(Path::new(r"D:\docs\a.md")),
+            r"D:\docs\a.md"
+        );
+        assert_eq!(
+            strip_verbatim_prefix(Path::new("/tmp/docs/a.md")),
+            "/tmp/docs/a.md"
+        );
+    }
+
+    #[test]
+    fn scan_directory_returns_dialog_style_plain_paths() {
+        let dir =
+            std::env::temp_dir().join(format!("lightmarkit-scan-test-{}", std::process::id()));
+        fs::create_dir_all(&dir).expect("创建临时目录失败");
+        fs::write(dir.join("笔记.md"), "# 笔记").expect("写入临时 Markdown 失败");
+
+        let mut visited = HashSet::new();
+        let mut markdown_file_count = 0;
+        let files =
+            scan_directory(&dir, 0, &mut visited, &mut markdown_file_count).expect("扫描临时目录失败");
+
+        let entry = files
+            .iter()
+            .find(|item| item.name == "笔记.md")
+            .expect("扫描结果应包含刚写入的 Markdown 文件");
+
+        // Windows 上 canonicalize 会产生 `\\?\` 前缀；返回前端的路径必须还原为
+        // 普通形式，与文件/文件夹对话框的路径一致，否则前端按字符串匹配同一文件会失败
+        assert!(
+            !entry.path.starts_with("\\\\?\\"),
+            "路径不应保留 verbatim 前缀：{}",
+            entry.path
+        );
+        let expected_dir = strip_verbatim_prefix(&fs::canonicalize(&dir).unwrap());
+        assert_eq!(Path::new(&entry.path), Path::new(&expected_dir).join("笔记.md"));
+
+        fs::remove_dir_all(&dir).ok();
     }
 }

@@ -1,0 +1,124 @@
+/*
+ * 图表查看器（DiagramViewer）样式。
+ *
+ * 层级说明（z-index 递增，舞台在 DOM 中位于工具栏之后，必须显式分层，
+ * 否则按绘制顺序舞台会盖住工具栏导致按钮无法点击）：
+ * - .diagram-viewer：固定定位的全窗口模态容器，z-index 高于设置页（2000）；
+ * - .diagram-viewer-backdrop（z:0）：半透明遮罩，纯视觉；
+ * - .diagram-viewer-stage（z:1）：滚轮缩放 / 拖拽平移的交互区域，覆盖全窗口；
+ * - .diagram-viewer-toolbar（z:2）：悬浮在顶部的缩放工具栏，位于舞台之上可点击；
+ * - .diagram-viewer-layer：仅承担平移（translate）；缩放由宿主 div 的布局尺寸驱动，
+ *   SVG 按最终尺寸重新栅格化，保持矢量级清晰。
+ */
+
+.diagram-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 3000;
+}
+
+.diagram-viewer-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background-color: rgba(15, 20, 25, 0.72);
+}
+
+.diagram-viewer-toolbar {
+  position: absolute;
+  top: 16px;
+  left: 50%;
+  z-index: 2;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 6px 8px;
+  background: #ffffff;
+  border: 1px solid #d5d5d5;
+  border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+  transform: translateX(-50%);
+}
+
+.diagram-viewer-scale {
+  min-width: 48px;
+  color: #444444;
+  font-size: 12px;
+  text-align: center;
+  user-select: none;
+}
+
+.diagram-viewer-button {
+  display: grid;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 6px;
+  color: #555555;
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  user-select: none;
+  background: #ffffff;
+  border: 1px solid #d5d5d5;
+  border-radius: 4px;
+  place-items: center;
+}
+
+.diagram-viewer-button-text {
+  font-size: 12px;
+}
+
+.diagram-viewer-close {
+  color: #b42318;
+  font-size: 18px;
+}
+
+.diagram-viewer-button:hover {
+  color: #111111;
+  background-color: #f2f2f2;
+  border-color: #bcbcbc;
+}
+
+.diagram-viewer-button:focus-visible {
+  outline: 2px solid #222222;
+  outline-offset: 2px;
+}
+
+.diagram-viewer-stage {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  cursor: grab;
+  /* 拖拽中显示抓取光标 */
+  touch-action: none;
+  user-select: none;
+  overscroll-behavior: contain;
+}
+
+.diagram-viewer-stage:active {
+  cursor: grabbing;
+}
+
+.diagram-viewer-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+/* SVG 宿主：白色画布衬托图表；currentColor 文字继承深色前景保证可读。
+   宿主的 width/height 由组件按缩放倍率驱动（矢量高清缩放的关键） */
+.diagram-viewer-svg-host {
+  color: #222222;
+  background: #ffffff;
+  border-radius: 8px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.35);
+}
+
+.diagram-viewer-svg-host svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+}

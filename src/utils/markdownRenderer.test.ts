@@ -210,3 +210,58 @@ describe('markdownRenderer', () => {
     expect(diagrams[1].querySelector('[data-testid="second-diagram"]')).not.toBeNull()
   })
 })
+
+describe('代码块语法高亮', () => {
+  it('已知语言应生成 highlight.js token span', () => {
+    const html = renderMarkdownToHtml(['```ts', 'const answer: number = 42', '```'].join('\n'))
+
+    expect(html).toContain('language-ts')
+    expect(html).toContain('hljs-keyword')
+    expect(html).toContain('hljs-number')
+  })
+
+  it('代码中的 HTML 应被转义而非注入', () => {
+    const html = renderMarkdownToHtml(['```html', '<div class="evil">&</div>', '```'].join('\n'))
+
+    // 高亮输出必须经过转义：不允许出现未转义的原始标签
+    expect(html).not.toContain('<div class="evil">')
+    expect(html).toContain('&lt;')
+    expect(html).toContain('&amp;')
+  })
+
+  it('未注册语言应回退为纯文本并保留 language 类名', () => {
+    const html = renderMarkdownToHtml(['```notalang', 'const answer = 42', '```'].join('\n'))
+
+    expect(html).toContain('language-notalang')
+    expect(html).not.toContain('hljs-')
+    // 回退路径由 markdown-it 默认转义，内容仍应安全呈现
+    expect(html).toContain('const answer = 42')
+  })
+
+  it('语言别名应正常映射高亮', () => {
+    const html = renderMarkdownToHtml(['```py', 'print("hi")', '```'].join('\n'))
+
+    expect(html).toContain('language-py')
+    expect(html).toContain('hljs-')
+  })
+
+  it('mermaid 代码块不走语法高亮分支', () => {
+    const html = renderMarkdownToHtml(['```mermaid', 'graph TD; A-->B;', '```'].join('\n'))
+
+    expect(html).toContain('class="mermaid"')
+    expect(html).toContain('title="双击放大查看"')
+    expect(html).not.toContain('hljs-')
+  })
+
+  it('行内代码不参与语法高亮', () => {
+    const html = renderMarkdownToHtml('`const answer = 42`')
+
+    expect(html).not.toContain('hljs-')
+  })
+
+  it('导出 HTML 应携带高亮标记', async () => {
+    const html = await renderMarkdownToExportHtml(['```ts', 'const answer = 42', '```'].join('\n'))
+
+    expect(html).toContain('hljs-keyword')
+  })
+})

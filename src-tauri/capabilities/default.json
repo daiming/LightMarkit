@@ -12,7 +12,7 @@
       "identifier": "opener:allow-open-url",
       "allow": [
         {
-          "url": "https://github.com/zhtdbobo/LightMarkit"
+          "url": "https://github.com/daiming/LightMarkit"
         },
         {
           "url": "http://*"

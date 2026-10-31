@@ -1,12 +1,10 @@
 # LightMarkit
 
-<!-- release-version: 0.4.6 -->
+<!-- release-version: 0.5.0 -->
 
 LightMarkit 是一款基于 Tauri 2、React 和 TypeScript 构建的轻量级桌面 Markdown 编辑器，支持 Windows 和 macOS。
 
-当前稳定版本：[v0.4.6](https://github.com/zhtdbobo/LightMarkit/releases/tag/v0.4.6)
-
-当前预览版本：[v0.4.6-preview.2](https://github.com/zhtdbobo/LightMarkit/releases/tag/v0.4.6-preview.2)
+当前稳定版本：[v0.5.0](https://github.com/daiming/LightMarkit/releases/tag/v0.5.0)
 
 ## 功能
 
@@ -33,8 +31,10 @@ LightMarkit 是一款基于 Tauri 2、React 和 TypeScript 构建的轻量级桌
 
 - 实时渲染 Markdown，支持表格、只读任务列表、脚注、删除线、自动链接和软换行。
 - 支持相对路径、绝对路径和 `file://` 形式的本地图片。
-- 支持 Mermaid 图表渲染。
-- 提供 Markdown 源码编辑和纯预览两种单栏视图，内容区右上角会提示 Windows 的 `Ctrl+/` 或 macOS 的 `⌘/` 切换快捷键，并保持当前阅读位置和滚动条布局稳定。
+- 支持 Mermaid 图表渲染；双击图表可打开全窗口查看器，SVG 矢量缩放无损放大，支持滚轮缩放、拖拽平移、适应窗口/100% 切换。
+- 代码块按语言语法高亮着色（覆盖约 35 种常用语言），配色与编辑器统一；未识别语言回退纯文本。
+- 标题分级着色，引用块、表头、行内代码采用与编辑器统一的彩色主题，导出 HTML/PDF 与预览配色一致。
+- 提供 Markdown 源码编辑和纯预览两种单栏视图，标题栏设置按钮后提供切换入口，快捷键为 Windows 的 `Ctrl+E` 或 macOS 的 `⌘E`，并保持当前阅读位置和滚动条布局稳定；打开 Markdown 文件默认进入预览模式。
 - 在设置中统一调整源码与预览的字体和字号；使用 `Ctrl/⌘++`、`Ctrl/⌘+-` 缩放文档内容，使用 `Ctrl/⌘+0` 恢复默认字号，不影响应用菜单和侧栏。
 - 预览代码块保留原始缩进和长行横向滚动，并支持复制与折叠；折叠后显示语言、首个非空代码行和总行数摘要。
 
@@ -50,7 +50,7 @@ LightMarkit 是一款基于 Tauri 2、React 和 TypeScript 构建的轻量级桌
 - 导出 HTML，并嵌入本地图片和已经渲染的 Mermaid 图表。
 - 导出 PDF，复用预览样式和渲染结果。
 - 应用界面适配系统明暗外观。
-- 窗口控制适配桌面平台：Windows 使用右上角自定义按钮，macOS 使用系统原生标题栏和红黄绿按钮。
+- 窗口控制适配桌面平台：Windows 使用右上角自定义按钮，macOS 使用系统原生标题栏和红黄绿按钮；双击标题栏空白区域可最大化或还原窗口。
 - 系统托盘菜单支持打开文件或文件夹、保存、导出、进入设置以及显示、隐藏和退出应用；macOS 同时提供原生顶部菜单栏。
 - 支持在“关于”界面检查、下载并安装经过签名验证的应用更新。
 
@@ -61,7 +61,7 @@ LightMarkit 是一款基于 Tauri 2、React 和 TypeScript 构建的轻量级桌
 - Windows x64 NSIS 安装包（`.exe`）。
 - macOS Universal 磁盘映像（`.dmg`），兼容 Intel 和 Apple Silicon。
 
-- [下载最新版本](https://github.com/zhtdbobo/LightMarkit/releases/latest)
+- [下载最新版本](https://github.com/daiming/LightMarkit/releases/latest)
 
 自动发布还会生成 Windows 和 macOS 更新包、对应的 `.sig` 签名以及包含两个平台信息的 `latest.json`。
 
