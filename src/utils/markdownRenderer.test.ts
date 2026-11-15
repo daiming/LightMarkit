@@ -173,8 +173,44 @@ describe('markdownRenderer', () => {
     await renderMermaidDiagrams(wrapper)
 
     expect(mermaidModule.default.initialize).toHaveBeenCalledWith(
-      expect.objectContaining({ securityLevel: 'strict' })
+      expect.objectContaining({
+        securityLevel: 'strict',
+        // 主题色跟随应用蓝色系，布局间距舒展
+        themeVariables: expect.objectContaining({ primaryColor: '#EAF2FF' }),
+        flowchart: expect.objectContaining({ nodeSpacing: 60, rankSpacing: 80 }),
+      })
     )
+  })
+
+  it('横向流程图应改写为自上而下展开', async () => {
+    const mermaidModule = await import('mermaid')
+    const wrapper = document.createElement('div')
+    wrapper.innerHTML = renderMarkdownToHtml(
+      ['```mermaid', 'graph LR', '  A --> B --> C', '```'].join('\n')
+    )
+
+    await renderMermaidDiagrams(wrapper)
+
+    expect(mermaidModule.default.render).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.stringContaining('graph TD')
+    )
+  })
+
+  it('直角矩形节点应渲染为圆角矩形', async () => {
+    const mermaidModule = await import('mermaid')
+    vi.mocked(mermaidModule.default.render).mockResolvedValueOnce({
+      svg: '<svg data-testid="rounded-rect"><g class="node"><rect width="100" height="40"></rect></g></svg>',
+      bindFunctions: vi.fn(),
+    } as never)
+    const wrapper = document.createElement('div')
+    wrapper.innerHTML = renderMarkdownToHtml(['```mermaid', 'flowchart TD', '  A', '```'].join('\n'))
+
+    await renderMermaidDiagrams(wrapper)
+
+    const rect = wrapper.querySelector('.node rect')
+    expect(rect).toHaveAttribute('rx', '8')
+    expect(rect).toHaveAttribute('ry', '8')
   })
 
   it('单个 Mermaid 图表失败时应该显示错误并继续渲染其他图表', async () => {

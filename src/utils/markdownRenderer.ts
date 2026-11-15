@@ -575,6 +575,15 @@ export function renderMarkdownToHtml(content: string, options: MarkdownRenderOpt
   return html
 }
 
+/**
+ * 布局方向规整：横向流程图（LR/RL）在大文档里容易挤成一团，
+ * 且横向滚动阅读不自然；统一改写为自上而下（TD）展开——
+ * 下方空间易于扩展，阅读与滚动查看都更舒服。
+ */
+function normalizeMermaidDirection(definition: string): string {
+  return definition.replace(/^(\s*(?:graph|flowchart)\s+)(?:LR|RL)\b/im, '$1TD')
+}
+
 export async function renderMermaidDiagrams(root: ParentNode): Promise<void> {
   const mermaidElements = Array.from(root.querySelectorAll<HTMLElement>('.mermaid'))
 
@@ -589,11 +598,31 @@ export async function renderMermaidDiagrams(root: ParentNode): Promise<void> {
     startOnLoad: false,
     theme: 'default',
     securityLevel: 'strict',
+    // 主题色跟随应用的蓝色系（mermaid 默认主题的节点为浅紫色）
+    themeVariables: {
+      primaryColor: '#EAF2FF', // 节点填充：浅蓝
+      primaryBorderColor: '#7CB1FF', // 节点边框
+      primaryTextColor: '#2B4A75', // 节点文字：深蓝灰
+      secondaryColor: '#E1EEFF', // 分支节点（默认粉紫，统一为浅蓝）
+      tertiaryColor: '#F3F8FF', // 第三层级（默认浅紫灰，统一为更浅蓝）
+      lineColor: '#8FAECB', // 连线：灰蓝
+      edgeLabelBackground: '#F3F8FF', // 连线标签底色
+      clusterBkg: '#F5F9FF', // 子图背景
+      clusterBorder: '#B9D3F5', // 子图边框
+    },
+    flowchart: {
+      // 舒展布局：加大节点间距与层级间距，避免节点挤到一起
+      nodeSpacing: 60,
+      rankSpacing: 80,
+      padding: 20,
+      curve: 'basis',
+      useMaxWidth: true,
+    },
   })
 
   await Promise.all(
     mermaidElements.map(async (element, index) => {
-      const graphDefinition = element.textContent?.trim() ?? ''
+      const graphDefinition = normalizeMermaidDirection(element.textContent?.trim() ?? '')
 
       if (!graphDefinition || element.querySelector('svg')) {
         return
@@ -606,6 +635,13 @@ export async function renderMermaidDiagrams(root: ParentNode): Promise<void> {
 
         element.innerHTML = svg
         element.removeAttribute('data-mermaid-error')
+        // 直角矩形节点改为圆角矩形；已有圆角的形状（胶囊/圆）保持原样
+        element.querySelectorAll('.node rect, rect.actor').forEach((rect) => {
+          if (Number(rect.getAttribute('rx') ?? 0) === 0) {
+            rect.setAttribute('rx', '8')
+            rect.setAttribute('ry', '8')
+          }
+        })
         element.querySelectorAll<SVGTextElement>('text').forEach((textElement) => {
           const hasExplicitFill = textElement.hasAttribute('fill')
           const hasStyleFill = /(?:^|;)\s*fill\s*:/.test(textElement.getAttribute('style') ?? '')
