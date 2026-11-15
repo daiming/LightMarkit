@@ -68,6 +68,8 @@ interface EditorTab {
   viewMode: ViewMode
   editorScrollTop: number
   previewScrollTop: number
+  /** 是否已挂载过编辑器（懒挂载：首次进入编辑模式才创建 CodeMirror 实例） */
+  editorMounted: boolean
 }
 
 const FALLBACK_DOCUMENT_NAME = 'LightMarkit Document'
@@ -93,6 +95,7 @@ function createEditorTab(overrides: Partial<EditorTab> = {}): EditorTab {
     viewMode: 'edit',
     editorScrollTop: 0,
     previewScrollTop: 0,
+    editorMounted: false,
     ...overrides,
   }
 }
@@ -1022,6 +1025,27 @@ function App() {
 
   const loadFile = useCallback(async (filePath: string) => {
     const requestId = ++fileLoadRequestRef.current
+
+    // 已打开的文件：直接切换 Tab 即可，跳过整文件磁盘读取
+    // （旧实现先 fileRead 再查 Tab，读取结果对已有 Tab 完全被丢弃，
+    // 大文件切换时的卡顿部分来源于这次无用 IO）。
+    // 外部修改由 file-changed 监听负责推送刷新，无需在此重读。
+    const existingTab = tabsRef.current.find((tab) => tab.filePath === filePath)
+
+    if (existingTab) {
+      if (existingTab.id !== activeTabIdRef.current) {
+        // switchToTab 同步完成 UI 切换（内部处理滚动位置捕获与在途请求作废）
+        switchToTab(existingTab.id)
+        // Rust 端当前文件状态随后台同步（驱动 watcher 重新瞄准），不阻塞切换
+        await setCurrentFile(filePath)
+      } else {
+        // 点击当前文件：仅同步 Rust 端状态
+        await setCurrentFile(filePath)
+      }
+      setFileError(null)
+      return
+    }
+
     const fileContent = await fileRead(filePath)
 
     if (requestId !== fileLoadRequestRef.current) {
@@ -1035,39 +1059,33 @@ function App() {
     }
 
     captureActiveTabPosition()
-    const existingTab = tabsRef.current.find((tab) => tab.filePath === filePath)
+    const currentTab = tabsRef.current.find((tab) => tab.id === activeTabIdRef.current)
+    const shouldReuseBlankTab = currentTab && currentTab.filePath === null && currentTab.content === ''
+    // 打开 Markdown 文件默认进入预览模式（Tab 记忆该模式，切回时保持一致）
+    const nextTab = createEditorTab({
+      filePath,
+      content: fileContent,
+      lastSyncedContent: fileContent,
+      viewMode: 'preview',
+    })
 
-    if (existingTab) {
-      switchToTab(existingTab.id)
+    if (shouldReuseBlankTab) {
+      const reusedTab = { ...nextTab, id: activeTabIdRef.current }
+      setTabs((currentTabs) =>
+        currentTabs.map((tab) => (tab.id === activeTabIdRef.current ? reusedTab : tab))
+      )
     } else {
-      const currentTab = tabsRef.current.find((tab) => tab.id === activeTabIdRef.current)
-      const shouldReuseBlankTab = currentTab && currentTab.filePath === null && currentTab.content === ''
-      // 打开 Markdown 文件默认进入预览模式（Tab 记忆该模式，切回时保持一致）
-      const nextTab = createEditorTab({
-        filePath,
-        content: fileContent,
-        lastSyncedContent: fileContent,
-        viewMode: 'preview',
-      })
-
-      if (shouldReuseBlankTab) {
-        const reusedTab = { ...nextTab, id: activeTabIdRef.current }
-        setTabs((currentTabs) =>
-          currentTabs.map((tab) => (tab.id === activeTabIdRef.current ? reusedTab : tab))
-        )
-      } else {
-        setTabs((currentTabs) => [...currentTabs, nextTab])
-        activeTabIdRef.current = nextTab.id
-        setActiveTabId(nextTab.id)
-      }
-
-      setContent(fileContent)
-      contentRef.current = fileContent
-      lastSyncedContentRef.current = fileContent
-      currentFileRef.current = filePath
-      setCurrentFilePath(filePath)
-      setViewMode('preview')
+      setTabs((currentTabs) => [...currentTabs, nextTab])
+      activeTabIdRef.current = nextTab.id
+      setActiveTabId(nextTab.id)
     }
+
+    setContent(fileContent)
+    contentRef.current = fileContent
+    lastSyncedContentRef.current = fileContent
+    currentFileRef.current = filePath
+    setCurrentFilePath(filePath)
+    setViewMode('preview')
     setFileError(null)
   }, [captureActiveTabPosition, switchToTab])
 
@@ -1856,6 +1874,24 @@ function App() {
   }, [])
 
   /**
+   * 懒挂载编辑器：Tab 首次进入编辑模式时才创建 CodeMirror 实例。
+   * 打开文件默认进入预览模式，此前每个新 Tab 一打开就会挂载
+   * CodeMirror 并解析全文——既拖慢文档打开速度（切换卡顿来源之一），
+   * 也浪费内存；标记一旦置位终身保持，已挂载的编辑器保留撤销栈与光标。
+   */
+  useEffect(() => {
+    if (viewMode !== 'edit') {
+      return
+    }
+
+    // updater 幂等：已挂载时返回原引用，React 直接跳过更新，不会级联渲染
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    updateTabById(activeTabId, (tab) =>
+      tab.editorMounted ? tab : { ...tab, editorMounted: true }
+    )
+  }, [viewMode, activeTabId, updateTabById])
+
+  /**
    * 切换 Tab 或切换视图模式后恢复该 Tab 记忆的滚动位置。
    *
    * 注意：依赖只允许是 [activeTabId, viewMode]。此前依赖误写为包含 tabs，
@@ -2536,22 +2572,24 @@ function App() {
                           ref={isActive ? editorPanelRef : undefined}
                           className={`editor-panel ${tabViewMode === 'edit' ? '' : 'is-hidden'}`}
                         >
-                          <Editor
-                            value={tab.content}
-                            onChange={(nextContent) => {
-                              if (isActive) setActiveContent(nextContent)
-                            }}
-                            wysiwyg={false}
-                            currentFile={tab.filePath}
-                            testId={isActive && tabViewMode === 'edit' ? 'editor-container' : null}
-                            className={isEditorFullWidth ? 'full-width-editor' : ''}
-                            onReady={(view) => {
-                              editorViewsRef.current.set(tab.id, view)
-                              if (isActive) {
-                                editorViewRef.current = view
-                                updateUndoAvailability(view)
-                              }
-                            }}
+                          {/* 懒挂载：未进入过编辑模式的 Tab 只渲染占位，不创建 CodeMirror */}
+                          {tab.editorMounted ? (
+                            <Editor
+                              value={tab.content}
+                              onChange={(nextContent) => {
+                                if (isActive) setActiveContent(nextContent)
+                              }}
+                              wysiwyg={false}
+                              currentFile={tab.filePath}
+                              testId={isActive && tabViewMode === 'edit' ? 'editor-container' : null}
+                              className={isEditorFullWidth ? 'full-width-editor' : ''}
+                              onReady={(view) => {
+                                editorViewsRef.current.set(tab.id, view)
+                                if (isActive) {
+                                  editorViewRef.current = view
+                                  updateUndoAvailability(view)
+                                }
+                              }}
                             onUpdate={(view) => {
                               if (isActive) {
                                 const nextContent = view.state.doc.toString()
@@ -2562,6 +2600,9 @@ function App() {
                               }
                             }}
                           />
+                          ) : (
+                            <div className="editor-wrapper source-editor" />
+                          )}
                         </div>
                         {isActive && tabViewMode === 'preview' && (
                           <div ref={previewPanelRef} className="preview-panel">

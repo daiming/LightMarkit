@@ -537,8 +537,42 @@ md.renderer.rules.link_open = (tokens, idx, options, env, self) => {
     : self.renderToken(tokens, idx, options)
 }
 
+/**
+ * 渲染结果 LRU 缓存：切换文档回到已看过的内容时跳过 markdown-it + hljs
+ * 的全文同步渲染（预览面板随 Tab 激活重挂载，此前每次切换都要整篇重渲，
+ * 是切换卡顿的主要来源之一）。
+ * 缓存键为「当前文件路径 + 全文内容」，内容变化自动失效。
+ */
+const RENDER_CACHE_LIMIT = 16
+const renderCache = new Map<string, string>()
+
+/** 清空渲染缓存（测试隔离与内存紧张时手动释放） */
+export function clearMarkdownRenderCache(): void {
+  renderCache.clear()
+}
+
 export function renderMarkdownToHtml(content: string, options: MarkdownRenderOptions = {}): string {
-  return md.render(content, { currentFile: options.currentFile })
+  const key = `${options.currentFile ?? ''}\u0000${content}`
+  const cached = renderCache.get(key)
+
+  if (cached !== undefined) {
+    // LRU 触碰：命中后移到末尾
+    renderCache.delete(key)
+    renderCache.set(key, cached)
+    return cached
+  }
+
+  const html = md.render(content, { currentFile: options.currentFile })
+  renderCache.set(key, html)
+
+  if (renderCache.size > RENDER_CACHE_LIMIT) {
+    const oldestKey = renderCache.keys().next().value
+    if (oldestKey !== undefined) {
+      renderCache.delete(oldestKey)
+    }
+  }
+
+  return html
 }
 
 export async function renderMermaidDiagrams(root: ParentNode): Promise<void> {
@@ -610,6 +644,54 @@ export async function renderMermaidDiagrams(root: ParentNode): Promise<void> {
   )
 }
 
+/**
+ * 本地图片 data URL 缓存：切换文档回到已看过的内容时跳过逐张 IPC 读取，
+ * 图片即时显示（此前每次切换预览都重新读盘，是切换卡顿的另一来源）。
+ * 双重上限控制内存：条数 + 字节预算；单张超大数据（base64 后 > 4MB）不缓存。
+ */
+const IMAGE_CACHE_LIMIT = 24
+const IMAGE_CACHE_BUDGET_BYTES = 48 * 1024 * 1024
+const imageDataUrlCache = new Map<string, string>()
+
+/** 清空图片缓存（测试隔离与内存紧张时手动释放） */
+export function clearImageDataUrlCache(): void {
+  imageDataUrlCache.clear()
+}
+
+function touchImageDataUrlCache(path: string, dataUrl: string): void {
+  imageDataUrlCache.delete(path)
+  imageDataUrlCache.set(path, dataUrl)
+}
+
+function storeImageDataUrl(path: string, dataUrl: string): void {
+  if (dataUrl.length > 4 * 1024 * 1024) {
+    return
+  }
+
+  touchImageDataUrlCache(path, dataUrl)
+
+  if (imageDataUrlCache.size > IMAGE_CACHE_LIMIT) {
+    const oldestKey = imageDataUrlCache.keys().next().value
+    if (oldestKey !== undefined) {
+      imageDataUrlCache.delete(oldestKey)
+    }
+  }
+
+  // 按字节预算从最旧开始逐出（base64 字符数近似字节数）
+  let totalBytes = 0
+  for (const value of imageDataUrlCache.values()) {
+    totalBytes += value.length
+  }
+  while (totalBytes > IMAGE_CACHE_BUDGET_BYTES && imageDataUrlCache.size > 1) {
+    const oldestKey = imageDataUrlCache.keys().next().value
+    if (oldestKey === undefined) {
+      break
+    }
+    totalBytes -= imageDataUrlCache.get(oldestKey)?.length ?? 0
+    imageDataUrlCache.delete(oldestKey)
+  }
+}
+
 export async function hydrateLocalImages(
   root: ParentNode,
   options: MarkdownRenderOptions = {}
@@ -627,10 +709,22 @@ export async function hydrateLocalImages(
       }
 
       image.setAttribute('data-local-src', localPath)
+
+      const cachedDataUrl = imageDataUrlCache.get(localPath)
+
+      if (cachedDataUrl !== undefined) {
+        touchImageDataUrlCache(localPath, cachedDataUrl)
+        image.setAttribute('src', cachedDataUrl)
+        image.removeAttribute('data-local-src')
+        image.removeAttribute('data-local-image-state')
+        return
+      }
+
       image.setAttribute('data-local-image-state', 'loading')
 
       try {
         const dataUrl = await readImageAsDataUrl(localPath)
+        storeImageDataUrl(localPath, dataUrl)
         image.setAttribute('src', dataUrl)
         image.removeAttribute('data-local-src')
         image.removeAttribute('data-local-image-state')

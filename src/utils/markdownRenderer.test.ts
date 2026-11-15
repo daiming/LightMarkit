@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { readImageAsDataUrl } from './imageApi'
 import {
+  clearImageDataUrlCache,
+  clearMarkdownRenderCache,
   hydrateLocalImages,
   renderMermaidDiagrams,
   renderMarkdownToExportHtml,
@@ -26,6 +28,9 @@ vi.mock('mermaid', () => ({
 describe('markdownRenderer', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // 渲染与图片缓存为模块级状态，测试之间必须清空以保证隔离
+    clearMarkdownRenderCache()
+    clearImageDataUrlCache()
   })
 
   it('应该识别 Typora 风格的 Windows 本地图片路径', () => {
@@ -263,5 +268,45 @@ describe('代码块语法高亮', () => {
     const html = await renderMarkdownToExportHtml(['```ts', 'const answer = 42', '```'].join('\n'))
 
     expect(html).toContain('hljs-keyword')
+  })
+
+  it('相同内容与文件路径的渲染应命中缓存且结果一致', () => {
+    const content = ['# 标题', '', '正文段落'].join('\n')
+
+    const first = renderMarkdownToHtml(content, { currentFile: 'C:\\docs\\a.md' })
+    const second = renderMarkdownToHtml(content, { currentFile: 'C:\\docs\\a.md' })
+
+    // 命中缓存时返回同一份 HTML
+    expect(second).toBe(first)
+
+    // 内容变化后 key 失效，重新渲染出不同结果
+    const changed = renderMarkdownToHtml(`${content}\n新增段落`, { currentFile: 'C:\\docs\\a.md' })
+    expect(changed).not.toBe(first)
+
+    // currentFile 参与缓存键：同内容不同文件时，相对路径图片解析为
+    // 不同绝对路径，两条缓存互不干扰
+    const imageContent = '![img](./pic.png)'
+    const fromA = renderMarkdownToHtml(imageContent, { currentFile: 'C:\\docs\\a.md' })
+    const fromB = renderMarkdownToHtml(imageContent, { currentFile: 'D:\\other\\b.md' })
+    expect(fromA).toContain('C:\\docs\\pic.png')
+    expect(fromB).toContain('D:\\other\\pic.png')
+  })
+
+  it('同一本地图片重复水合应命中缓存不重复读取', async () => {
+    vi.mocked(readImageAsDataUrl).mockResolvedValue('data:image/png;base64,cached')
+    const wrapper = document.createElement('div')
+    wrapper.innerHTML = '<img src="C:\\Users\\Lenovo\\repeat.png" alt="img">'
+
+    await hydrateLocalImages(wrapper)
+    const firstImage = wrapper.querySelector('img')
+    expect(firstImage).toHaveAttribute('src', 'data:image/png;base64,cached')
+
+    // 第二次水合（模拟切换文档切回）：命中缓存，不再发起 IPC
+    const secondWrapper = document.createElement('div')
+    secondWrapper.innerHTML = '<img src="C:\\Users\\Lenovo\\repeat.png" alt="img">'
+    await hydrateLocalImages(secondWrapper)
+
+    expect(readImageAsDataUrl).toHaveBeenCalledTimes(1)
+    expect(secondWrapper.querySelector('img')).toHaveAttribute('src', 'data:image/png;base64,cached')
   })
 })

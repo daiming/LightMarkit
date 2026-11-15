@@ -13,7 +13,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { open } from '@tauri-apps/plugin-dialog'
 import { listen } from '@tauri-apps/api/event'
 import App from './App'
-import { fileRead, fileWrite, getCurrentFile } from './utils/fileApi'
+import { fileRead, fileWrite, getCurrentFile, setCurrentFile } from './utils/fileApi'
 
 // Mock Tauri APIs（与 App.test.tsx 保持一致的模拟面）
 vi.mock('@tauri-apps/plugin-dialog', () => ({
@@ -236,5 +236,34 @@ describe('App 文件同步与保存', () => {
     )
     // 外部同步刷新不应触发写盘
     expect(fileWrite).not.toHaveBeenCalled()
+  })
+
+  it('再次打开已打开的文件应直接切换而不重新读取磁盘', async () => {
+    const pathA = 'C:\\docs\\alpha.md'
+    const pathB = 'C:\\docs\\beta.md'
+    vi.mocked(open)
+      .mockResolvedValueOnce(pathA)
+      .mockResolvedValueOnce(pathB)
+      .mockResolvedValueOnce(pathA)
+    vi.mocked(fileRead).mockImplementation(async (filePath) =>
+      filePath === pathA ? '# Alpha 文档' : '# Beta 文档'
+    )
+
+    render(<App />)
+    await openFileViaMenu('Alpha 文档')
+    await openFileViaMenu('Beta 文档')
+    expect(fileRead).toHaveBeenCalledTimes(2)
+
+    // 第三次打开 A：命中已有 Tab 直接切换，不触发新的磁盘读取
+    //（旧实现每次点击文件树都会整文件重读，结果却被丢弃）
+    fireEvent.click(screen.getByRole('button', { name: '文件' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: '打开文件' }))
+    await waitFor(() =>
+      expect(screen.getByTestId('preview-container')).toHaveTextContent('Alpha 文档')
+    )
+
+    expect(fileRead).toHaveBeenCalledTimes(2)
+    // Rust 端当前文件状态仍被同步（驱动 watcher 重新瞄准）
+    expect(setCurrentFile).toHaveBeenCalledWith(pathA)
   })
 })
