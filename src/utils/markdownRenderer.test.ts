@@ -175,11 +175,69 @@ describe('markdownRenderer', () => {
     expect(mermaidModule.default.initialize).toHaveBeenCalledWith(
       expect.objectContaining({
         securityLevel: 'strict',
-        // 主题色跟随应用蓝色系，布局间距舒展
+        // 主题色跟随应用蓝色系，布局间距舒展；浅黄色分组背景保持默认
         themeVariables: expect.objectContaining({ primaryColor: '#EAF2FF' }),
-        flowchart: expect.objectContaining({ nodeSpacing: 60, rankSpacing: 80 }),
+        flowchart: expect.objectContaining({
+          nodeSpacing: 60,
+          rankSpacing: 80,
+          useMaxWidth: false,
+        }),
       })
     )
+    // 分组背景（浅黄）与分支色不得被覆盖为蓝色
+    const initCall = vi.mocked(mermaidModule.default.initialize).mock.calls[0][0]
+    expect(initCall.themeVariables).not.toHaveProperty('secondaryColor')
+    expect(initCall.themeVariables).not.toHaveProperty('clusterBkg')
+  })
+
+  it('多个平级 subgraph 应注入隐形链纵向堆叠', async () => {
+    const mermaidModule = await import('mermaid')
+    const wrapper = document.createElement('div')
+    wrapper.innerHTML = renderMarkdownToHtml(
+      [
+        '```mermaid',
+        'flowchart TD',
+        '    subgraph 动线B["动线 B"]',
+        '        Q0["提交"] --> Q1["审批"]',
+        '    end',
+        '    subgraph 动线A["动线 A"]',
+        '        M1["入库"] --> M2["记账"]',
+        '    end',
+        '```',
+      ].join('\n')
+    )
+
+    await renderMermaidDiagrams(wrapper)
+
+    const renderedDefinition = vi.mocked(mermaidModule.default.render).mock.calls[0][1]
+    expect(renderedDefinition).toContain('flowchart TD')
+    // 末尾追加分组间的隐形链，dagre 据此把分组从上到下排列
+    expect(renderedDefinition.trimEnd().endsWith('动线B ~~~ 动线A')).toBe(true)
+  })
+
+  it('布局预处理渲染失败时应回退原始定义重试', async () => {
+    const mermaidModule = await import('mermaid')
+    vi.mocked(mermaidModule.default.render)
+      .mockRejectedValueOnce(new Error('unknown diagram type'))
+      .mockResolvedValueOnce({
+        svg: '<svg data-testid="fallback-rendered"><g class="node"><rect></rect></g></svg>',
+        bindFunctions: vi.fn(),
+      } as never)
+    const wrapper = document.createElement('div')
+    wrapper.innerHTML = renderMarkdownToHtml(
+      ['```mermaid', 'flowchart TD', '    subgraph A["a"]', '        X --> Y', '    end', '    subgraph B["b"]', '        Z --> W', '    end', '```'].join(
+        '\n'
+      )
+    )
+
+    await renderMermaidDiagrams(wrapper)
+
+    // 第二次调用使用原始定义（无隐形链）
+    expect(mermaidModule.default.render).toHaveBeenCalledTimes(2)
+    const fallbackDefinition = vi.mocked(mermaidModule.default.render).mock.calls[1][1]
+    expect(fallbackDefinition).not.toContain('~~~')
+    expect(wrapper.querySelector('[data-testid="fallback-rendered"]')).not.toBeNull()
+    expect(wrapper.querySelector('.mermaid')).not.toHaveAttribute('data-mermaid-error')
   })
 
   it('横向流程图应改写为自上而下展开', async () => {

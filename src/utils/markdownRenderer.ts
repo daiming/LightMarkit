@@ -584,6 +584,49 @@ function normalizeMermaidDirection(definition: string): string {
   return definition.replace(/^(\s*(?:graph|flowchart)\s+)(?:LR|RL)\b/im, '$1TD')
 }
 
+/**
+ * 解析顶层 subgraph 声明的 id（跳过嵌套层级）。
+ * 依赖 subgraph/end 的缩进配对近似解析——文档场景的 subgraph
+ * 声明行首无缩进、结束为独立 end 行，满足该约定。
+ */
+function collectTopLevelSubgraphIds(definition: string): string[] {
+  const ids: string[] = []
+  let depth = 0
+
+  for (const line of definition.split('\n')) {
+    const subgraphMatch = line.match(/^\s*subgraph\s+([A-Za-z0-9_\-\u4e00-\u9fa5]+)/)
+
+    if (subgraphMatch) {
+      if (depth === 0) {
+        ids.push(subgraphMatch[1])
+      }
+      depth += 1
+      continue
+    }
+
+    if (/^\s*end\s*$/.test(line)) {
+      depth = Math.max(0, depth - 1)
+    }
+  }
+
+  return [...new Set(ids)]
+}
+
+/**
+ * 分组纵向堆叠：多个平级 subgraph 在 dagre 的 TD 布局下会横向并排，
+ * 整图因此被压得又宽又小；在图末尾追加一条隐形链（~~~ 不可见边），
+ * 让分组按声明顺序从上到下排列，流程整体向下展开，便于阅读。
+ */
+function stackSubgraphsVertically(definition: string): string {
+  const ids = collectTopLevelSubgraphIds(definition)
+
+  if (ids.length < 2) {
+    return definition
+  }
+
+  return `${definition}\n${ids.join(' ~~~ ')}`
+}
+
 export async function renderMermaidDiagrams(root: ParentNode): Promise<void> {
   const mermaidElements = Array.from(root.querySelectorAll<HTMLElement>('.mermaid'))
 
@@ -598,17 +641,14 @@ export async function renderMermaidDiagrams(root: ParentNode): Promise<void> {
     startOnLoad: false,
     theme: 'default',
     securityLevel: 'strict',
-    // 主题色跟随应用的蓝色系（mermaid 默认主题的节点为浅紫色）
+    // 仅把默认的浅紫色矩形节点改为浅蓝、跟随应用蓝色系；
+    // secondary/tertiary 与 subgraph 的浅黄色背景框保持 mermaid 默认配色
     themeVariables: {
       primaryColor: '#EAF2FF', // 节点填充：浅蓝
       primaryBorderColor: '#7CB1FF', // 节点边框
       primaryTextColor: '#2B4A75', // 节点文字：深蓝灰
-      secondaryColor: '#E1EEFF', // 分支节点（默认粉紫，统一为浅蓝）
-      tertiaryColor: '#F3F8FF', // 第三层级（默认浅紫灰，统一为更浅蓝）
       lineColor: '#8FAECB', // 连线：灰蓝
       edgeLabelBackground: '#F3F8FF', // 连线标签底色
-      clusterBkg: '#F5F9FF', // 子图背景
-      clusterBorder: '#B9D3F5', // 子图边框
     },
     flowchart: {
       // 舒展布局：加大节点间距与层级间距，避免节点挤到一起
@@ -616,42 +656,71 @@ export async function renderMermaidDiagrams(root: ParentNode): Promise<void> {
       rankSpacing: 80,
       padding: 20,
       curve: 'basis',
-      useMaxWidth: true,
+      // 不把图整体压缩到容器宽度——大图保持原始尺寸，
+      // 由容器横向滚动查看（此前 useMaxWidth 会把宽图缩得过小难以辨认）
+      useMaxWidth: false,
+    },
+    sequence: {
+      // 时序图参与者多时同样容易被压缩得过小，保持原始尺寸
+      useMaxWidth: false,
     },
   })
 
+  /** 把渲染产物写入元素并做统一的视觉后处理（圆角、文字着色） */
+  const applyRenderedSvg = (
+    element: HTMLElement,
+    svg: string,
+    bindFunctions?: (el: HTMLElement) => void
+  ) => {
+    element.innerHTML = svg
+    element.removeAttribute('data-mermaid-error')
+    // 直角矩形节点改为圆角矩形；已有圆角的形状（胶囊/圆）保持原样
+    element.querySelectorAll('.node rect, rect.actor').forEach((rect) => {
+      if (Number(rect.getAttribute('rx') ?? 0) === 0) {
+        rect.setAttribute('rx', '8')
+        rect.setAttribute('ry', '8')
+      }
+    })
+    element.querySelectorAll<SVGTextElement>('text').forEach((textElement) => {
+      const hasExplicitFill = textElement.hasAttribute('fill')
+      const hasStyleFill = /(?:^|;)\s*fill\s*:/.test(textElement.getAttribute('style') ?? '')
+
+      if (!hasExplicitFill && !hasStyleFill) {
+        textElement.setAttribute('fill', 'currentColor')
+      }
+    })
+    bindFunctions?.(element)
+  }
+
   await Promise.all(
     mermaidElements.map(async (element, index) => {
-      const graphDefinition = normalizeMermaidDirection(element.textContent?.trim() ?? '')
+      const originalDefinition = element.textContent?.trim() ?? ''
 
-      if (!graphDefinition || element.querySelector('svg')) {
+      if (!originalDefinition || element.querySelector('svg')) {
         return
       }
 
+      // 布局优化（方向规整 + 分组纵向堆叠）后的定义；渲染失败时回退原始定义
+      const processedDefinition = stackSubgraphsVertically(
+        normalizeMermaidDirection(originalDefinition)
+      )
       const id = `mermaid-${Date.now()}-${index}`
 
       try {
-        const { svg, bindFunctions } = await mermaid.render(id, graphDefinition)
-
-        element.innerHTML = svg
-        element.removeAttribute('data-mermaid-error')
-        // 直角矩形节点改为圆角矩形；已有圆角的形状（胶囊/圆）保持原样
-        element.querySelectorAll('.node rect, rect.actor').forEach((rect) => {
-          if (Number(rect.getAttribute('rx') ?? 0) === 0) {
-            rect.setAttribute('rx', '8')
-            rect.setAttribute('ry', '8')
-          }
-        })
-        element.querySelectorAll<SVGTextElement>('text').forEach((textElement) => {
-          const hasExplicitFill = textElement.hasAttribute('fill')
-          const hasStyleFill = /(?:^|;)\s*fill\s*:/.test(textElement.getAttribute('style') ?? '')
-
-          if (!hasExplicitFill && !hasStyleFill) {
-            textElement.setAttribute('fill', 'currentColor')
-          }
-        })
-        bindFunctions?.(element)
+        const { svg, bindFunctions } = await mermaid.render(id, processedDefinition)
+        applyRenderedSvg(element, svg, bindFunctions)
       } catch (error) {
+        // 布局预处理（隐形链/方向改写）与个别图源不兼容时，回退原始定义重试
+        if (processedDefinition !== originalDefinition) {
+          try {
+            const fallback = await mermaid.render(`${id}-fallback`, originalDefinition)
+            applyRenderedSvg(element, fallback.svg, fallback.bindFunctions)
+            return
+          } catch {
+            // 回退也失败则走统一错误展示，落到下方 catch 流程
+          }
+        }
+
         // 单个图表失败不应影响其他图表，同时要让用户看到失败原因而不是一段原始文本
         const message = error instanceof Error ? error.message : String(error)
 
@@ -668,13 +737,15 @@ export async function renderMermaidDiagrams(root: ParentNode): Promise<void> {
 
         const source = document.createElement('pre')
         source.className = 'mermaid-error-source'
-        source.textContent = graphDefinition
+        source.textContent = originalDefinition
 
         element.append(errorTitle, errorMessage, source)
 
         // mermaid 解析失败时会把临时节点留在 body 上，需要自行清理
         document.getElementById(id)?.remove()
         document.getElementById(`d${id}`)?.remove()
+        document.getElementById(`${id}-fallback`)?.remove()
+        document.getElementById(`d${id}-fallback`)?.remove()
       }
     })
   )
