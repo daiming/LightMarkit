@@ -639,14 +639,23 @@ export async function renderMermaidDiagrams(root: ParentNode): Promise<void> {
     startOnLoad: false,
     theme: 'default',
     securityLevel: 'strict',
-    // 仅把默认的浅紫色矩形节点改为浅蓝、跟随应用蓝色系；
-    // secondary/tertiary 与 subgraph 的浅黄色背景框保持 mermaid 默认配色
+    // 整体配色取自应用 Markdown 主题色板（Preview.css），保持预览观感统一：
+    // 节点对应表头蓝系、分组框对应引用块（浅底 + 紫边）、分支色对应标题分级。
+    // mermaid 11 中 flowchart 节点实际读取 mainBkg/nodeBorder/textColor
+    //（primaryColor 系列不必然派生到 flowchart），需同时显式声明。
     themeVariables: {
-      primaryColor: '#EAF2FF', // 节点填充：浅蓝
-      primaryBorderColor: '#7CB1FF', // 节点边框
-      primaryTextColor: '#2B4A75', // 节点文字：深蓝灰
-      lineColor: '#8FAECB', // 连线：灰蓝
-      edgeLabelBackground: '#F3F8FF', // 连线标签底色
+      primaryColor: '#e8f0fe', // 矩形节点底：表头底色
+      primaryBorderColor: '#7da7e8', // 节点边框：链接下划线蓝
+      primaryTextColor: '#174ea6', // 节点文字：表头文字深蓝
+      mainBkg: '#e8f0fe', // flowchart 节点背景（同 primaryColor）
+      nodeBorder: '#7da7e8', // flowchart 节点边框（同 primaryBorderColor）
+      textColor: '#174ea6', // flowchart 节点文字（同 primaryTextColor）
+      lineColor: '#8593ad', // 连线：中性灰蓝
+      edgeLabelBackground: '#f6f8fc', // 连线标签底：应用浅底
+      clusterBkg: '#f8f9fe', // 分组背景：引用块底色
+      clusterBorder: '#7f56d9', // 分组边框：引用块紫色左线
+      secondaryColor: '#f1eef9', // 分支节点：H3 紫浅化
+      tertiaryColor: '#e9f4ee', // 第三层级：H5 绿浅化
     },
     flowchart: {
       // 适度加大节点间距与层级间距避免拥挤，但不过分撑大整图

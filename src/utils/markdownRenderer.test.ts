@@ -175,8 +175,12 @@ describe('markdownRenderer', () => {
     expect(mermaidModule.default.initialize).toHaveBeenCalledWith(
       expect.objectContaining({
         securityLevel: 'strict',
-        // 主题色跟随应用蓝色系，布局间距适度；浅黄色分组背景保持默认
-        themeVariables: expect.objectContaining({ primaryColor: '#EAF2FF' }),
+        // 主题色取自应用 Markdown 色板：节点=表头蓝系、分组框=引用块紫系
+        themeVariables: expect.objectContaining({
+          primaryColor: '#e8f0fe',
+          clusterBkg: '#f8f9fe',
+          clusterBorder: '#7f56d9',
+        }),
         flowchart: expect.objectContaining({
           nodeSpacing: 50,
           rankSpacing: 60,
@@ -184,10 +188,6 @@ describe('markdownRenderer', () => {
         }),
       })
     )
-    // 分组背景（浅黄）与分支色不得被覆盖为蓝色
-    const initCall = vi.mocked(mermaidModule.default.initialize).mock.calls[0][0]
-    expect(initCall.themeVariables).not.toHaveProperty('secondaryColor')
-    expect(initCall.themeVariables).not.toHaveProperty('clusterBkg')
   })
 
   it('未声明方向的 subgraph 应注入 direction TD 保证列内向下展开', async () => {
