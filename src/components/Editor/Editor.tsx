@@ -44,6 +44,18 @@ const Editor: React.FC<EditorProps> = ({
   const editorRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const livePreviewCompartmentRef = useRef(new Compartment())
+  // updateListener 随编辑器在挂载时创建并存活整个生命周期，其闭包会冻结挂载时的
+  // props。这里通过 ref 间接引用最新回调，避免调用到过期的 onChange/onUpdate——
+  // App 侧回调闭包中的 isActive 会被冻结为挂载时的值，隐藏 Tab 的编辑器一旦
+  // 文档发生变化，就会把内容写进当前激活的 Tab，造成文档内容串写。
+  const onChangeRef = useRef(onChange)
+  const onUpdateRef = useRef(onUpdate)
+
+  // 每次渲染后刷新回调引用（无依赖数组，保证 ref 始终指向最新一次渲染的回调）
+  useEffect(() => {
+    onChangeRef.current = onChange
+    onUpdateRef.current = onUpdate
+  })
 
   useEffect(() => {
     if (!editorRef.current) return
@@ -59,11 +71,11 @@ const Editor: React.FC<EditorProps> = ({
         livePreviewCompartmentRef.current.of(wysiwyg ? createLivePreview({ currentFile }) : []),
         EditorView.editable.of(!readOnly),
         EditorView.updateListener.of((update) => {
-          onUpdate?.(update.view)
+          onUpdateRef.current?.(update.view)
 
-          if (update.docChanged && onChange) {
+          if (update.docChanged && onChangeRef.current) {
             const newValue = update.state.doc.toString()
-            onChange(newValue)
+            onChangeRef.current(newValue)
           }
         }),
       ],

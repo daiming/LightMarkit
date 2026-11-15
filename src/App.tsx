@@ -1368,6 +1368,36 @@ function App() {
     }
   }, [content, currentFile])
 
+  /**
+   * 严格校验当前文档是否存在未保存修改。
+   *
+   * 判定规则（两组同源状态各自比较，禁止跨 Tab 混比）：
+   * 1. 全局 ref 组（contentRef vs lastSyncedContentRef）判定一致 → 未修改；
+   * 2. 全局组判定有差异时，再读取激活 Tab 自身的 content 与 lastSyncedContent 复核：
+   *    仅当 Tab 状态是"新鲜的"（content 与全局内容一致）且自身已同步时才否决——
+   *    这说明全局标记被在途保存或切换竞态污染出了"假脏"状态；
+   *    若 Tab 状态尚未刷新（落后于全局内容），以全局组为准，避免误拦真实编辑。
+   *
+   * 所有保存入口（自动保存、快捷键、失焦、关闭窗口）必须先通过本校验，
+   * 一行未改绝不写盘。
+   */
+  const hasUnsavedChanges = useCallback(() => {
+    if (contentRef.current === lastSyncedContentRef.current) {
+      return false
+    }
+
+    const activeTab = tabsRef.current.find((tab) => tab.id === activeTabIdRef.current)
+    if (
+      activeTab &&
+      activeTab.content === contentRef.current &&
+      activeTab.lastSyncedContent === activeTab.content
+    ) {
+      return false
+    }
+
+    return true
+  }, [])
+
   // 另存为
   const handleSaveAsFile = useCallback(async (): Promise<boolean> => {
     try {
@@ -1409,16 +1439,42 @@ function App() {
       return handleSaveAsFile()
     }
 
-    // 所有保存入口最终都经过这里。内容未变化时不触碰磁盘，避免只切换视图、
-    // 窗口失焦或关闭窗口就刷新文件时间戳并被 Git/文件监视器误判。
-    if (content === lastSyncedContentRef.current) {
+    // 所有保存入口最终都经过这里。严格校验修改状态：内容未变化时不触碰磁盘，
+    // 避免只切换视图、窗口失焦或关闭窗口就刷新文件时间戳并被 Git/文件监视器误判。
+    if (!hasUnsavedChanges()) {
       return true
     }
 
+    // 闭包捕获的 (content, currentFile) 可能落后于实时 refs（定时器或异步回调竞态），
+    // 两者不一致说明文档已被切换，放弃本次保存，交给重新武装的防抖定时器处理
+    if (currentFile !== currentFileRef.current || content !== contentRef.current) {
+      return true
+    }
+
+    // 保存前固化本次要写入的文件与内容，写盘期间发生的一切切换都以固化的值为准
+    const savedFile = currentFile
+    const savedContent = content
+
     try {
       setSaveStatus('saving')
-      await fileWrite(currentFile, content)
-      lastSyncedContentRef.current = content
+      await fileWrite(savedFile, savedContent)
+
+      // 写盘期间用户可能已切换到其他文档：全局同步标记只在仍停留在同一文件时更新，
+      // 避免把 A 的已保存内容误标到 B 头上（那会让 B 出现"未修改却待保存"的假脏状态）
+      if (currentFileRef.current === savedFile) {
+        lastSyncedContentRef.current = savedContent
+      }
+
+      // 回写本次保存文件对应 Tab 的同步标记：脏点随之消失；content 一致条件
+      // 确保不覆盖保存期间产生的新编辑（那种情况下该 Tab 保持脏状态等待下次保存）
+      setTabs((currentTabs) =>
+        currentTabs.map((tab) =>
+          tab.filePath === savedFile && tab.content === savedContent
+            ? { ...tab, lastSyncedContent: savedContent }
+            : tab
+        )
+      )
+
       setSaveStatus('saved')
       console.log('File saved successfully')
 
@@ -1432,7 +1488,7 @@ function App() {
       setSaveStatus('idle')
       return false
     }
-  }, [currentFile, content, handleSaveAsFile])
+  }, [currentFile, content, handleSaveAsFile, hasUnsavedChanges])
 
   useEffect(() => {
     let disposed = false
@@ -1539,7 +1595,7 @@ function App() {
       if (!saved) {
         return
       }
-    } else if (latestFile && latestContent !== lastSyncedContentRef.current) {
+    } else if (latestFile && hasUnsavedChanges()) {
       try {
         await fileWrite(latestFile, latestContent)
         lastSyncedContentRef.current = latestContent
@@ -1552,7 +1608,7 @@ function App() {
 
     isProgrammaticCloseRef.current = true
     await getCurrentWindow().destroy()
-  }, [handleSaveAsFile, updateActiveTab])
+  }, [handleSaveAsFile, updateActiveTab, hasUnsavedChanges])
 
   useEffect(() => {
     let unlisten: (() => void) | undefined
@@ -1587,8 +1643,9 @@ function App() {
       return
     }
 
-    // 外部同步写入时不重复触发自动保存
-    if (content === lastSyncedContentRef.current) {
+    // 严格校验修改状态：一行未改绝不进入防抖队列
+    // （外部同步写入、纯切换文档都不应触发保存）
+    if (!hasUnsavedChanges()) {
       return
     }
 
@@ -1602,19 +1659,19 @@ function App() {
         clearTimeout(autoSaveTimerRef.current)
       }
     }
-  }, [content, currentFile, handleSaveFile])
+  }, [content, currentFile, handleSaveFile, hasUnsavedChanges])
 
   // 窗口失焦/关闭前强制保存
   useEffect(() => {
     const handleBeforeUnload = async (e: BeforeUnloadEvent) => {
-      if (currentFile && content !== lastSyncedContentRef.current) {
+      if (currentFile && hasUnsavedChanges()) {
         e.preventDefault()
         await handleSaveFile()
       }
     }
 
     const handleVisibilityChange = async () => {
-      if (document.hidden && currentFile && content !== lastSyncedContentRef.current) {
+      if (document.hidden && currentFile && hasUnsavedChanges()) {
         await handleSaveFile()
       }
     }
@@ -1626,7 +1683,7 @@ function App() {
       window.removeEventListener('beforeunload', handleBeforeUnload)
       document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
-  }, [content, currentFile, handleSaveFile])
+  }, [currentFile, handleSaveFile, hasUnsavedChanges])
 
   // 加载当前文件 + 恢复上次文件夹
   useEffect(() => {
@@ -1910,24 +1967,50 @@ function App() {
     })
 
     void listen<string>('file-changed', async (event) => {
-      if (disposed || event.payload !== currentFile) {
+      if (disposed) {
+        return
+      }
+
+      // 事件可能在切换文档后才到达，本处理器闭包捕获的 currentFile 已过期，
+      // 守卫一律改用实时 ref 判断事件文件是否仍是当前激活文件
+      const filePath = event.payload
+      if (filePath !== currentFileRef.current) {
         return
       }
 
       try {
-        const latestContent = await fileRead(currentFile)
-        if (latestContent === lastSyncedContentRef.current) {
+        const latestContent = await fileRead(filePath)
+
+        // await（IPC 往返）期间用户可能已切换到其他文档，恢复执行后必须重新校验，
+        // 否则旧文件的磁盘内容会被写进切换后的新 Tab——这正是
+        // "A 文档内容串写进 B 文档"的根因
+        if (disposed || filePath !== currentFileRef.current) {
           return
         }
 
-        // 本地有未同步修改时不覆盖，避免与其他程序编辑冲突时丢字
+        // 激活 Tab 必须仍归属于事件文件，防止状态读取错位
+        const activeTab = tabsRef.current.find((tab) => tab.id === activeTabIdRef.current)
+        if (!activeTab || activeTab.filePath !== filePath) {
+          return
+        }
+
+        // 磁盘内容与已知同步内容一致时无需刷新
+        if (latestContent === activeTab.lastSyncedContent) {
+          return
+        }
+
+        // 本地有未同步修改时不覆盖，避免与其他程序编辑冲突时丢字。
+        // 两组比较各自同源（Tab 对 Tab、全局 ref 对全局 ref），禁止跨 Tab 混比
+        if (activeTab.content !== activeTab.lastSyncedContent) {
+          return
+        }
         if (contentRef.current !== lastSyncedContentRef.current) {
           return
         }
 
         lastSyncedContentRef.current = latestContent
         setActiveContent(latestContent)
-        updateActiveTab((tab) => ({ ...tab, lastSyncedContent: latestContent }))
+        updateTabById(activeTab.id, (tab) => ({ ...tab, lastSyncedContent: latestContent }))
         setFileError(null)
       } catch (error) {
         console.error('Failed to refresh file content:', error)
@@ -1944,7 +2027,7 @@ function App() {
       disposed = true
       unlisten?.()
     }
-  }, [currentFile, setActiveContent, updateActiveTab])
+  }, [currentFile, setActiveContent, updateTabById])
 
   const updateActiveOutlineFromLine = useCallback(
     (line: number) => {

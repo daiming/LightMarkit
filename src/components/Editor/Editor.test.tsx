@@ -48,6 +48,29 @@ describe('Editor', () => {
       }
     })
 
+    it('重新渲染后应调用最新的 onChange 回调而非挂载时的闭包', async () => {
+      // 回归场景：updateListener 在挂载时创建，若闭包冻结挂载时的 props，
+      // App 侧回调闭包中的 isActive 会永远是挂载时的值，隐藏 Tab 的编辑器
+      // 文档变化时会调用过期回调，把内容写进当前激活的 Tab（文档串写）
+      const firstChange = vi.fn()
+      const secondChange = vi.fn()
+
+      const { rerender } = render(<Editor onChange={firstChange} initialValue="test" />)
+      rerender(<Editor onChange={secondChange} initialValue="test" />)
+
+      const editorElement = screen.getByTestId('editor-container').querySelector('.cm-content')
+      expect(editorElement).toBeInTheDocument()
+
+      const user = userEvent.setup()
+      await user.click(editorElement!)
+      await user.keyboard('x')
+
+      await waitFor(() => {
+        expect(secondChange).toHaveBeenCalled()
+      })
+      expect(firstChange).not.toHaveBeenCalled()
+    })
+
     it('应该接受新的 value prop', () => {
       const { rerender } = render(<Editor value="Initial" />)
 
