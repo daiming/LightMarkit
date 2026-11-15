@@ -25,17 +25,16 @@
 
 /*
  * 树行统一结构：[展开箭头槽 14px][彩色图标 18px][标题][关闭按钮]。
- * 行高 32px，悬停/选中为内嵌圆角高亮（左右各留 6px 边距，不通栏），
+ * 扁平化风格：行背景通栏无圆角；悬停为中性灰，选中为浅蓝底 +
+ * 蓝色标题 + 左侧深色竖条，两种状态视觉上完全区分。
  * 层级关系仅靠缩进表达，不画层级引导线，保持视觉干净。
  */
 .file-item-header {
   display: flex;
   align-items: center;
   gap: 5px;
-  min-height: 32px;
-  margin: 1px 6px;
+  min-height: 34px;
   padding: 3px 8px;
-  border-radius: 6px;
   cursor: pointer;
   transition: background-color 0.15s;
 }
@@ -44,9 +43,13 @@
   background-color: var(--hover-bg);
 }
 
-/* 选中态：浅蓝底 + 蓝色标题，与图标的蓝色系呼应，便于快速定位当前文档 */
+/*
+ * 选中态：左侧 4px 深色竖条用 inset box-shadow 实现（不占布局空间，
+ * 不引起文字位移），与悬停的中性灰背景明确区分。
+ */
 .file-item-header.active {
   background-color: var(--file-tree-active-bg);
+  box-shadow: inset 4px 0 0 0 var(--file-tree-active-bar);
 }
 
 .file-item-header.active .file-name {
@@ -85,7 +88,8 @@
 
 /*
  * 目录标题与文件标题差异化：
- * 目录 15px/600/近黑，文件 13px/400/中灰，
+ * 以 14px 为最小字号基准，目录放大到 16px；
+ * 目录 16px/600/近黑，文件 14px/400/中灰，
  * 字号、字重、明暗三重对比，扫视时目录骨架与文件条目层次分明。
  */
 .file-name {
@@ -94,13 +98,13 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
   color: var(--file-tree-file-text);
 }
 
 .file-item-header.is-dir .file-name,
 .file-item-header.folder-root .file-name {
-  font-size: 0.9375rem;
+  font-size: 1rem;
   font-weight: 600;
   color: var(--text-primary);
 }
@@ -139,7 +143,7 @@
 .folder-empty {
   padding: 6px 12px 6px 42px;
   color: var(--text-muted);
-  font-size: 0.8125rem;
+  font-size: 0.875rem;
 }
 
 /* 多个已打开文件夹之间的分隔线（仅此一条，避免与根目录行叠加出双线） */
@@ -163,6 +167,7 @@
   --file-tree-file-text: #6b7280;
   --file-tree-accent: #2e7cf6;
   --file-tree-active-bg: rgba(46, 124, 246, 0.12);
+  --file-tree-active-bar: #2563eb;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -176,5 +181,6 @@
     --file-tree-file-text: #98a1ad;
     --file-tree-accent: #7cb1ff;
     --file-tree-active-bg: rgba(94, 158, 255, 0.16);
+    --file-tree-active-bar: #7cb1ff;
   }
 }
