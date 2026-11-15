@@ -74,16 +74,25 @@
   transform: rotate(90deg);
 }
 
-/* 彩色图标槽；目录展开时轻微提亮，给出状态反馈 */
+/*
+ * 彩色图标槽（24px，居中容纳 20px 文件夹 / 22px 文档）。
+ * 文档图标填充色使用 currentColor：未选中与文件标题同为中灰，
+ * 选中行切换为主题蓝，与蓝色标题、深蓝竖条一起强化选中反馈。
+ * 文件夹固定琥珀色（开/合双态造型在组件内切换）。
+ */
 .tree-icon {
-  flex: 0 0 20px;
+  flex: 0 0 24px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
 }
 
-.tree-icon.is-open {
-  filter: brightness(1.07) saturate(1.05);
+.file-item-header.is-file .tree-icon {
+  color: var(--file-tree-file-text);
+}
+
+.file-item-header.is-file.active .tree-icon {
+  color: var(--file-tree-accent);
 }
 
 /*
