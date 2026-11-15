@@ -23,12 +23,19 @@
   width: 100%;
 }
 
+/*
+ * 树行统一结构：[展开箭头槽 14px][彩色图标 18px][标题][关闭按钮]。
+ * 行高 32px，悬停/选中为内嵌圆角高亮（左右各留 6px 边距，不通栏），
+ * 层级关系仅靠缩进表达，不画层级引导线，保持视觉干净。
+ */
 .file-item-header {
   display: flex;
   align-items: center;
-  gap: 4px;
-  min-height: 34px;
-  padding: 4px 8px;
+  gap: 5px;
+  min-height: 32px;
+  margin: 1px 6px;
+  padding: 3px 8px;
+  border-radius: 6px;
   cursor: pointer;
   transition: background-color 0.15s;
 }
@@ -37,63 +44,75 @@
   background-color: var(--hover-bg);
 }
 
+/* 选中态：浅蓝底 + 蓝色标题，与图标的蓝色系呼应，便于快速定位当前文档 */
 .file-item-header.active {
-  background-color: var(--active-bg);
+  background-color: var(--file-tree-active-bg);
+}
+
+.file-item-header.active .file-name {
+  color: var(--file-tree-accent);
   font-weight: 500;
 }
 
-.file-item-header.folder-root {
-  padding-left: 8px;
-  color: var(--text-primary);
-  font-weight: 600;
-  border-bottom: 1px solid var(--border-color);
-}
-
-.file-item-header.folder-root + .file-children {
-  padding: 4px 0;
-}
-
-.file-icon {
-  flex: 0 0 auto;
+/* 展开箭头槽：目录显示灰色箭头（展开时旋转朝下），文件保留空槽使图标纵向对齐 */
+.tree-chevron {
+  flex: 0 0 14px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 12px;
-  height: 18px;
-  font-size: 1rem;
-}
-
-.file-icon.folder {
   color: var(--text-muted);
-  font-size: 0;
 }
 
-.file-icon.folder::before {
-  width: 0;
-  height: 0;
-  content: '';
-  border-top: 4px solid transparent;
-  border-bottom: 4px solid transparent;
-  border-left: 5px solid currentColor;
-  transform-origin: 45% 50%;
+.tree-chevron svg {
   transition: transform 0.12s ease;
 }
 
-.file-icon.folder.expanded::before {
+.tree-chevron.is-expanded svg {
   transform: rotate(90deg);
 }
 
-.file-icon.document {
-  width: 4px;
+/* 彩色图标槽；目录展开时轻微提亮，给出状态反馈 */
+.tree-icon {
+  flex: 0 0 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
+.tree-icon.is-open {
+  filter: brightness(1.07) saturate(1.05);
+}
+
+/*
+ * 目录标题与文件标题差异化：
+ * 目录 15px/600/近黑，文件 13px/400/中灰，
+ * 字号、字重、明暗三重对比，扫视时目录骨架与文件条目层次分明。
+ */
 .file-name {
   flex: 1;
   min-width: 0;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
+  color: var(--file-tree-file-text);
+}
+
+.file-item-header.is-dir .file-name,
+.file-item-header.folder-root .file-name {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* 根目录（已打开的文件夹）行：作为分组标题，底部与内容留出呼吸空间 */
+.file-item-header.folder-root {
+  padding-left: 8px;
+  margin-top: 4px;
+}
+
+.file-item-header.folder-root + .file-children {
+  padding: 2px 0 4px;
 }
 
 .folder-close-button {
@@ -101,12 +120,9 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   color: var(--text-muted);
-  font-family: 'Segoe UI', sans-serif;
-  font-size: 14px;
-  line-height: 1;
   background-color: transparent;
   border: 0;
   border-radius: 4px;
@@ -121,12 +137,14 @@
 }
 
 .folder-empty {
-  padding: 6px 12px 6px 20px;
+  padding: 6px 12px 6px 42px;
   color: var(--text-muted);
   font-size: 0.8125rem;
 }
 
+/* 多个已打开文件夹之间的分隔线（仅此一条，避免与根目录行叠加出双线） */
 .folder-section + .folder-section {
+  margin-top: 4px;
   border-top: 1px solid var(--border-color);
 }
 
@@ -142,6 +160,9 @@
   --text-muted: #666;
   --hover-bg: #e8e8e8;
   --active-bg: #d0d0d0;
+  --file-tree-file-text: #6b7280;
+  --file-tree-accent: #2e7cf6;
+  --file-tree-active-bg: rgba(46, 124, 246, 0.12);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -152,5 +173,8 @@
     --text-muted: #999;
     --hover-bg: #2a2a2a;
     --active-bg: #333;
+    --file-tree-file-text: #98a1ad;
+    --file-tree-accent: #7cb1ff;
+    --file-tree-active-bg: rgba(94, 158, 255, 0.16);
   }
 }

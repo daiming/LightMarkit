@@ -147,4 +147,41 @@ describe('FileList', () => {
     expect(mockOnFolderClose).toHaveBeenCalledWith('/test')
     expect(mockOnFileSelect).not.toHaveBeenCalled()
   })
+
+  it('目录行与文件行应使用不同的类型样式类', () => {
+    render(<FileList folders={mockFolders} currentFile={null} onFileSelect={mockOnFileSelect} />)
+
+    const dirRow = screen.getByText('subdir').closest('.file-item-header')
+    const fileRow = screen.getByText('note1.md').closest('.file-item-header')
+
+    expect(dirRow).toHaveClass('is-dir')
+    expect(fileRow).toHaveClass('is-file')
+  })
+
+  it('目录与文件应渲染彩色图标与展开箭头', () => {
+    const { container } = render(
+      <FileList folders={mockFolders} currentFile={null} onFileSelect={mockOnFileSelect} />
+    )
+
+    // 每一行（含根目录、子目录、文件）都有一个 16px 彩色图标
+    const icons = container.querySelectorAll('.tree-icon svg')
+    // 根目录 test + note1 + note2 + subdir + note3 = 5 个
+    expect(icons).toHaveLength(5)
+
+    // 目录行有展开箭头，文件行箭头槽为空占位
+    const dirRow = screen.getByText('subdir').closest('.file-item-header')
+    const fileRow = screen.getByText('note1.md').closest('.file-item-header')
+    expect(dirRow?.querySelector('.tree-chevron svg')).toBeInTheDocument()
+    expect(fileRow?.querySelector('.tree-chevron svg')).not.toBeInTheDocument()
+  })
+
+  it('展开目录行的箭头应带展开状态类，文件行不应有', () => {
+    render(<FileList folders={mockFolders} currentFile={null} onFileSelect={mockOnFileSelect} />)
+
+    const dirHeader = screen.getByText('subdir').closest('.file-item-header')
+    expect(dirHeader?.querySelector('.tree-chevron')).toHaveClass('is-expanded')
+
+    fireEvent.click(screen.getByText('subdir'))
+    expect(dirHeader?.querySelector('.tree-chevron')).not.toHaveClass('is-expanded')
+  })
 })
