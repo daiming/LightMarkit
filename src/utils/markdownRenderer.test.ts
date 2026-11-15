@@ -190,7 +190,7 @@ describe('markdownRenderer', () => {
     expect(initCall.themeVariables).not.toHaveProperty('clusterBkg')
   })
 
-  it('多个平级 subgraph 保持原样由布局器横向并列', async () => {
+  it('未声明方向的 subgraph 应注入 direction TD 保证列内向下展开', async () => {
     const mermaidModule = await import('mermaid')
     const wrapper = document.createElement('div')
     wrapper.innerHTML = renderMarkdownToHtml(
@@ -201,6 +201,7 @@ describe('markdownRenderer', () => {
         '        Q0["提交"] --> Q1["审批"]',
         '    end',
         '    subgraph 动线A["动线 A"]',
+        '        direction LR',
         '        M1["入库"] --> M2["记账"]',
         '    end',
         '```',
@@ -210,10 +211,12 @@ describe('markdownRenderer', () => {
     await renderMermaidDiagrams(wrapper)
 
     const renderedDefinition = vi.mocked(mermaidModule.default.render).mock.calls[0][1]
-    // 不注入隐形链等任何改写：分组由 dagre 自然并列，各自向下展开
-    expect(renderedDefinition).not.toContain('~~~')
-    expect(renderedDefinition).toContain('flowchart TD')
-    expect(renderedDefinition).toContain('subgraph 动线A')
+    // 未声明方向的分组注入 direction TD（mermaid 11 中 subgraph
+    // 不会继承主图方向，不注入则分组内链条横向铺开撑宽整图）
+    expect(renderedDefinition).toContain('subgraph 动线B["动线 B"]\n        direction TD')
+    // 已显式声明方向的分组不重复注入
+    expect(renderedDefinition.match(/direction TD/g)).toHaveLength(1)
+    expect(renderedDefinition).toContain('direction LR')
   })
 
   it('方向改写渲染失败时应回退原始定义重试', async () => {

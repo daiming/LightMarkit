@@ -584,6 +584,47 @@ function normalizeMermaidDirection(definition: string): string {
   return definition.replace(/^(\s*(?:graph|flowchart)\s+)(?:LR|RL)\b/im, '$1TD')
 }
 
+/**
+ * 为每个未显式声明方向的 subgraph 注入 direction TD。
+ *
+ * 背景（实测 mermaid 11）：`flowchart TD` 中 subgraph 内部的布局
+ * 方向不会继承主图方向——分组内的链式节点默认横向铺开，整图被
+ * 撑成横向长条（如「出入库管理」动线 B：3200px 宽 × 318px 高），
+ * 压缩到容器宽度后图形过小。注入 direction TD 后分组内流程恢复
+ * 自上而下展开（动线 B 实测变为 523px 宽 × 1176px 高）。
+ * 已显式声明 direction 的 subgraph 不做改动；跨分组连线时
+ * mermaid 会忽略该声明改用主图方向（主图已被规整为 TD），
+ * 两种情况均为纵向，行为一致。
+ */
+function ensureSubgraphDirectionTd(definition: string): string {
+  const lines = definition.split('\n')
+  const output: string[] = []
+
+  for (let index = 0; index < lines.length; index += 1) {
+    output.push(lines[index])
+
+    const subgraphMatch = lines[index].match(/^(\s*)subgraph\s+/)
+    if (!subgraphMatch) {
+      continue
+    }
+
+    // 找到 subgraph 声明后的第一个非空行，判断是否已有 direction 声明
+    let next = index + 1
+    while (next < lines.length && lines[next].trim() === '') {
+      next += 1
+    }
+
+    const hasDirection =
+      next < lines.length && /^\s*direction\s+/.test(lines[next])
+
+    if (!hasDirection) {
+      output.push(`${subgraphMatch[1]}    direction TD`)
+    }
+  }
+
+  return output.join('\n')
+}
+
 export async function renderMermaidDiagrams(root: ParentNode): Promise<void> {
   const mermaidElements = Array.from(root.querySelectorAll<HTMLElement>('.mermaid'))
 
@@ -613,8 +654,8 @@ export async function renderMermaidDiagrams(root: ParentNode): Promise<void> {
       nodeSpacing: 50,
       rankSpacing: 60,
       padding: 15,
-      // 直线连接在多分支并列时曲线更不易视觉交叠
-      curve: 'linear',
+      // 平滑曲线连接，观感柔和（不用折线/直线）
+      curve: 'basis',
       // 图整体适配容器宽度，不出现横向滚动条；
       // 多分组场景由 subgraph 并列 + 各自向下展开保证可读性
       useMaxWidth: true,
@@ -655,8 +696,11 @@ export async function renderMermaidDiagrams(root: ParentNode): Promise<void> {
         return
       }
 
-      // 方向规整（LR/RL → TD）后的定义；渲染失败时回退原始定义
-      const processedDefinition = normalizeMermaidDirection(originalDefinition)
+      // 布局规整（主图 LR/RL → TD + 分组内注入 direction TD）后的定义；
+      // 渲染失败时回退原始定义
+      const processedDefinition = ensureSubgraphDirectionTd(
+        normalizeMermaidDirection(originalDefinition)
+      )
       const id = `mermaid-${Date.now()}-${index}`
 
       try {
