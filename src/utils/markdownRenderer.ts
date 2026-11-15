@@ -576,55 +576,12 @@ export function renderMarkdownToHtml(content: string, options: MarkdownRenderOpt
 }
 
 /**
- * 布局方向规整：横向流程图（LR/RL）在大文档里容易挤成一团，
- * 且横向滚动阅读不自然；统一改写为自上而下（TD）展开——
- * 下方空间易于扩展，阅读与滚动查看都更舒服。
+ * 布局方向规整：横向流程图（LR/RL）整链横排不利于阅读；
+ * 统一改写为自上而下（TD）展开——每条流程向下延伸，多个分组
+ * （subgraph）由布局器自然横向并列，整体宽度仍适配容器。
  */
 function normalizeMermaidDirection(definition: string): string {
   return definition.replace(/^(\s*(?:graph|flowchart)\s+)(?:LR|RL)\b/im, '$1TD')
-}
-
-/**
- * 解析顶层 subgraph 声明的 id（跳过嵌套层级）。
- * 依赖 subgraph/end 的缩进配对近似解析——文档场景的 subgraph
- * 声明行首无缩进、结束为独立 end 行，满足该约定。
- */
-function collectTopLevelSubgraphIds(definition: string): string[] {
-  const ids: string[] = []
-  let depth = 0
-
-  for (const line of definition.split('\n')) {
-    const subgraphMatch = line.match(/^\s*subgraph\s+([A-Za-z0-9_\-\u4e00-\u9fa5]+)/)
-
-    if (subgraphMatch) {
-      if (depth === 0) {
-        ids.push(subgraphMatch[1])
-      }
-      depth += 1
-      continue
-    }
-
-    if (/^\s*end\s*$/.test(line)) {
-      depth = Math.max(0, depth - 1)
-    }
-  }
-
-  return [...new Set(ids)]
-}
-
-/**
- * 分组纵向堆叠：多个平级 subgraph 在 dagre 的 TD 布局下会横向并排，
- * 整图因此被压得又宽又小；在图末尾追加一条隐形链（~~~ 不可见边），
- * 让分组按声明顺序从上到下排列，流程整体向下展开，便于阅读。
- */
-function stackSubgraphsVertically(definition: string): string {
-  const ids = collectTopLevelSubgraphIds(definition)
-
-  if (ids.length < 2) {
-    return definition
-  }
-
-  return `${definition}\n${ids.join(' ~~~ ')}`
 }
 
 export async function renderMermaidDiagrams(root: ParentNode): Promise<void> {
@@ -651,18 +608,16 @@ export async function renderMermaidDiagrams(root: ParentNode): Promise<void> {
       edgeLabelBackground: '#F3F8FF', // 连线标签底色
     },
     flowchart: {
-      // 舒展布局：加大节点间距与层级间距，避免节点挤到一起
-      nodeSpacing: 60,
-      rankSpacing: 80,
-      padding: 20,
-      curve: 'basis',
-      // 不把图整体压缩到容器宽度——大图保持原始尺寸，
-      // 由容器横向滚动查看（此前 useMaxWidth 会把宽图缩得过小难以辨认）
-      useMaxWidth: false,
-    },
-    sequence: {
-      // 时序图参与者多时同样容易被压缩得过小，保持原始尺寸
-      useMaxWidth: false,
+      // 适度加大节点间距与层级间距避免拥挤，但不过分撑大整图
+      //（间距越大整体越宽，useMaxWidth 压缩后节点反而越小）
+      nodeSpacing: 50,
+      rankSpacing: 60,
+      padding: 15,
+      // 直线连接在多分支并列时曲线更不易视觉交叠
+      curve: 'linear',
+      // 图整体适配容器宽度，不出现横向滚动条；
+      // 多分组场景由 subgraph 并列 + 各自向下展开保证可读性
+      useMaxWidth: true,
     },
   })
 
@@ -700,10 +655,8 @@ export async function renderMermaidDiagrams(root: ParentNode): Promise<void> {
         return
       }
 
-      // 布局优化（方向规整 + 分组纵向堆叠）后的定义；渲染失败时回退原始定义
-      const processedDefinition = stackSubgraphsVertically(
-        normalizeMermaidDirection(originalDefinition)
-      )
+      // 方向规整（LR/RL → TD）后的定义；渲染失败时回退原始定义
+      const processedDefinition = normalizeMermaidDirection(originalDefinition)
       const id = `mermaid-${Date.now()}-${index}`
 
       try {

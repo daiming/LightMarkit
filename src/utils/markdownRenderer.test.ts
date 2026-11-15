@@ -175,12 +175,12 @@ describe('markdownRenderer', () => {
     expect(mermaidModule.default.initialize).toHaveBeenCalledWith(
       expect.objectContaining({
         securityLevel: 'strict',
-        // 主题色跟随应用蓝色系，布局间距舒展；浅黄色分组背景保持默认
+        // 主题色跟随应用蓝色系，布局间距适度；浅黄色分组背景保持默认
         themeVariables: expect.objectContaining({ primaryColor: '#EAF2FF' }),
         flowchart: expect.objectContaining({
-          nodeSpacing: 60,
-          rankSpacing: 80,
-          useMaxWidth: false,
+          nodeSpacing: 50,
+          rankSpacing: 60,
+          useMaxWidth: true,
         }),
       })
     )
@@ -190,7 +190,7 @@ describe('markdownRenderer', () => {
     expect(initCall.themeVariables).not.toHaveProperty('clusterBkg')
   })
 
-  it('多个平级 subgraph 应注入隐形链纵向堆叠', async () => {
+  it('多个平级 subgraph 保持原样由布局器横向并列', async () => {
     const mermaidModule = await import('mermaid')
     const wrapper = document.createElement('div')
     wrapper.innerHTML = renderMarkdownToHtml(
@@ -210,12 +210,13 @@ describe('markdownRenderer', () => {
     await renderMermaidDiagrams(wrapper)
 
     const renderedDefinition = vi.mocked(mermaidModule.default.render).mock.calls[0][1]
+    // 不注入隐形链等任何改写：分组由 dagre 自然并列，各自向下展开
+    expect(renderedDefinition).not.toContain('~~~')
     expect(renderedDefinition).toContain('flowchart TD')
-    // 末尾追加分组间的隐形链，dagre 据此把分组从上到下排列
-    expect(renderedDefinition.trimEnd().endsWith('动线B ~~~ 动线A')).toBe(true)
+    expect(renderedDefinition).toContain('subgraph 动线A')
   })
 
-  it('布局预处理渲染失败时应回退原始定义重试', async () => {
+  it('方向改写渲染失败时应回退原始定义重试', async () => {
     const mermaidModule = await import('mermaid')
     vi.mocked(mermaidModule.default.render)
       .mockRejectedValueOnce(new Error('unknown diagram type'))
@@ -225,17 +226,17 @@ describe('markdownRenderer', () => {
       } as never)
     const wrapper = document.createElement('div')
     wrapper.innerHTML = renderMarkdownToHtml(
-      ['```mermaid', 'flowchart TD', '    subgraph A["a"]', '        X --> Y', '    end', '    subgraph B["b"]', '        Z --> W', '    end', '```'].join(
-        '\n'
-      )
+      ['```mermaid', 'flowchart LR', '    A --> B', '```'].join('\n')
     )
 
     await renderMermaidDiagrams(wrapper)
 
-    // 第二次调用使用原始定义（无隐形链）
+    // 第一次用改写后的 TD 定义失败，第二次回退原始 LR 定义成功
     expect(mermaidModule.default.render).toHaveBeenCalledTimes(2)
+    const processedDefinition = vi.mocked(mermaidModule.default.render).mock.calls[0][1]
     const fallbackDefinition = vi.mocked(mermaidModule.default.render).mock.calls[1][1]
-    expect(fallbackDefinition).not.toContain('~~~')
+    expect(processedDefinition).toContain('flowchart TD')
+    expect(fallbackDefinition).toContain('flowchart LR')
     expect(wrapper.querySelector('[data-testid="fallback-rendered"]')).not.toBeNull()
     expect(wrapper.querySelector('.mermaid')).not.toHaveAttribute('data-mermaid-error')
   })

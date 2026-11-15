@@ -546,9 +546,9 @@
 }
 
 .preview-container .mermaid svg {
-  /* 大图保持原始尺寸不压缩（useMaxWidth: false），由容器横向滚动查看；
-     小图靠容器的 text-align: center 居中 */
-  max-width: none;
+  /* 图适配容器宽度（useMaxWidth: true），不出现横向滚动条；
+     小于容器时靠容器的 text-align: center 居中 */
+  max-width: 100%;
   height: auto;
   background-color: #ffffff !important;
   print-color-adjust: exact;

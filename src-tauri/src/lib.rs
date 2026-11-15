@@ -1086,7 +1086,7 @@ img {
     page-break-inside: avoid;
 }
 .mermaid svg {
-    max-width: none;
+    max-width: 100%;
     max-height: 868px;
     height: auto;
     background-color: #ffffff !important;
@@ -1097,10 +1097,6 @@ img {
     body {
         max-width: none;
         padding: 0;
-    }
-    /* 打印/导出 PDF 时纸张宽度固定，宽图仍需压缩适配页面 */
-    .mermaid svg {
-        max-width: 100%;
     }
 }
 "#;
