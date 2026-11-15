@@ -173,7 +173,7 @@
   --text-muted: #666;
   --hover-bg: #e8e8e8;
   --active-bg: #d0d0d0;
-  --file-tree-file-text: #6b7280;
+  --file-tree-file-text: #4b5563;
   --file-tree-accent: #2e7cf6;
   --file-tree-active-bg: rgba(46, 124, 246, 0.12);
   --file-tree-active-bar: #2563eb;
@@ -187,7 +187,7 @@
     --text-muted: #999;
     --hover-bg: #2a2a2a;
     --active-bg: #333;
-    --file-tree-file-text: #98a1ad;
+    --file-tree-file-text: #aeb6c2;
     --file-tree-accent: #7cb1ff;
     --file-tree-active-bg: rgba(94, 158, 255, 0.16);
     --file-tree-active-bar: #7cb1ff;
