@@ -42,41 +42,49 @@ function ChevronIcon() {
 }
 
 /**
- * 文件夹图标（琥珀黄双色扁平风格，18px 整数网格绘制）。
- * 后页签用深一档的琥珀色，正面用亮琥珀色，纯色块无线条无描边，
- * 渲染尺寸与 viewBox 1:1 且坐标落在整像素上，保证小尺寸下边缘锐利。
+ * 文件夹图标（琥珀黄简笔线条风格，20px 网格绘制）。
+ * 2px 圆头描边勾勒经典文件夹轮廓；横向/纵向线段中心全部落在
+ * 奇数整数坐标上（2px 描边恰好覆盖整数像素区间），小尺寸下边缘锐利。
  */
 function FolderIcon() {
   return (
-    <svg viewBox="0 0 18 18" width="18" height="18" aria-hidden="true">
-      <path
-        fill="#E8A23C"
-        d="M2 4c0-1.1.9-2 2-2h2.9c.5 0 1 .2 1.4.6L9.6 4H14c1.1 0 2 .9 2 2v1H2V4Z"
-      />
-      <path
-        fill="#F7C050"
-        d="M2 6.5h14c1.1 0 2 .9 2 2V14c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6.5Z"
-      />
+    <svg
+      viewBox="0 0 20 20"
+      width="20"
+      height="20"
+      fill="none"
+      stroke="#F5A623"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M3 16V6a2 2 0 0 1 2-2h3.5l2 2H15a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
     </svg>
   )
 }
 
 /**
- * Markdown 文档图标（蓝色实心扁平风格，18px 整数网格绘制）。
- * 此前采用 1.1px 细描边 + 浅色填充，小尺寸下边缘发虚；
- * 现改为实心蓝色纸面 + 浅蓝折角与两根内容条，全部色块化、
- * 无细描边，与琥珀黄文件夹形成强色彩对比且边缘锐利。
+ * Markdown 文档图标（蓝色简笔线条风格，20px 网格绘制）。
+ * 2px 圆头描边勾勒带右上折角的纸面与两根内容行；
+ * 横向/纵向线段中心落在奇数整数坐标上，保证小尺寸下清晰不发虚。
  */
 function DocumentIcon() {
   return (
-    <svg viewBox="0 0 18 18" width="18" height="18" aria-hidden="true">
-      <path
-        fill="#4F8DF7"
-        d="M4.5 3c0-.83.67-1.5 1.5-1.5h4.2L14.5 5.8V15c0 .83-.67 1.5-1.5 1.5H6c-.83 0-1.5-.67-1.5-1.5V3Z"
-      />
-      <path fill="#A9CFFF" d="M10.2 1.5v4.3h4.3L10.2 1.5Z" />
-      <rect x="6.5" y="9" width="5" height="1.5" rx="0.75" fill="#DCEBFF" />
-      <rect x="6.5" y="12" width="3.5" height="1.5" rx="0.75" fill="#DCEBFF" />
+    <svg
+      viewBox="0 0 20 20"
+      width="20"
+      height="20"
+      fill="none"
+      stroke="#3D82F5"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M6 3h5l4 4v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" />
+      <path d="M11 3v4h4" />
+      <path d="M7.5 12h5M7.5 15h3.5" />
     </svg>
   )
 }

@@ -33,8 +33,8 @@
   display: flex;
   align-items: center;
   gap: 5px;
-  min-height: 34px;
-  padding: 3px 8px;
+  min-height: 36px;
+  padding: 4px 8px;
   cursor: pointer;
   transition: background-color 0.15s;
 }
@@ -76,7 +76,7 @@
 
 /* 彩色图标槽；目录展开时轻微提亮，给出状态反馈 */
 .tree-icon {
-  flex: 0 0 18px;
+  flex: 0 0 20px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
